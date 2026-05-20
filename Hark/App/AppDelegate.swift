@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let permissions: PermissionsManager
     let hotkey: HotkeyManager
     let recorder: AudioRecorder
+    let transcriber: Transcriber
     let panelController: PanelWindowController
     let onboardingController: OnboardingWindowController
 
@@ -17,10 +18,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let perms = PermissionsManager()
         let hotkeyManager = HotkeyManager()
         let audioRecorder = AudioRecorder()
+        let transcriberInstance = Transcriber()
         appState = state
         permissions = perms
         hotkey = hotkeyManager
         recorder = audioRecorder
+        transcriber = transcriberInstance
         panelController = PanelWindowController(appState: state, recorder: audioRecorder)
         onboardingController = OnboardingWindowController(permissions: perms)
         super.init()
@@ -45,6 +48,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         onboardingController.showIfNeeded()
+
+        // Warm the previously selected model in the background so the first
+        // dictation doesn't pay the load cost. If the model isn't downloaded
+        // yet, this kicks off the download in parallel.
+        transcriber.bootstrap()
     }
 
     /// Menu-driven panel toggle. Doesn't start/stop recording — the menu's job

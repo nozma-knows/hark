@@ -27,7 +27,16 @@ final class Transcriber {
         case failed(String)
     }
 
+    private static let selectedModelDefaultsKey = "co.milbo.hark.selectedModel"
+
     private(set) var state: State = .unloaded
+
+    /// Model the user has chosen to use. Persisted across launches.
+    /// Mutate via `select(_:)` to also trigger download/load.
+    private(set) var selectedModel: WhisperModel = {
+        let raw = UserDefaults.standard.string(forKey: Transcriber.selectedModelDefaultsKey)
+        return raw.flatMap(WhisperModel.init(rawValue:)) ?? .default
+    }()
 
     /// Folder where WhisperKit caches downloaded model weights.
     /// `~/Library/Application Support/Hark/Models/` so models survive app
@@ -48,6 +57,23 @@ final class Transcriber {
     func isDownloaded(_ model: WhisperModel) -> Bool {
         let dir = Self.modelsDirectory.appending(path: model.variant, directoryHint: .isDirectory)
         return FileManager.default.fileExists(atPath: dir.path)
+    }
+
+    /// Update the user's chosen model, persist it, and load it (downloading
+    /// first if needed). Cheap if `model` is already loaded.
+    func select(_ model: WhisperModel) async {
+        if selectedModel != model {
+            selectedModel = model
+            UserDefaults.standard.set(model.rawValue, forKey: Self.selectedModelDefaultsKey)
+        }
+        await loadIfNeeded(model)
+    }
+
+    /// Bootstrap on app launch — loads the previously selected model in the
+    /// background so the first dictation doesn't pay the load cost.
+    func bootstrap() {
+        let model = selectedModel
+        Task { await loadIfNeeded(model) }
     }
 
     /// Download the model if needed and load it into memory. No-op if

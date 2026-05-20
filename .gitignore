@@ -1,0 +1,60 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Generated Xcode project (source of truth is project.yml)
+*.xcodeproj
+*.xcworkspace
+
+# Generated Info.plist (XcodeGen writes to Hark/Generated/)
+Hark/Generated/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Bun / Node (Sidecar/)
+Sidecar/node_modules/
+Sidecar/dist/
+Sidecar/bun.lockb.local
+
+# Compiled sidecar artifact (bundled at build time)
+Hark/Resources/Sidecar/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Local config + secrets
+*.xcconfig.local
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+
+# Claude Code per-dev settings (project-level .claude/settings.json may be committed)
+.claude/settings.local.json
+.claude/plans/
+
+# Logs and crash reports
+*.log
+crash-reports/
+
+# Notarization artifacts
+*.dmg
+*.pkg
+notarize-output/

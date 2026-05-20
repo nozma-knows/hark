@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState: AppState
     let permissions: PermissionsManager
     let hotkey: HotkeyManager
+    let recorder: AudioRecorder
     let panelController: PanelWindowController
     let onboardingController: OnboardingWindowController
 
@@ -12,10 +13,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let state = AppState()
         let perms = PermissionsManager()
         let hotkeyManager = HotkeyManager()
+        let audioRecorder = AudioRecorder()
         appState = state
         permissions = perms
         hotkey = hotkeyManager
-        panelController = PanelWindowController(appState: state)
+        recorder = audioRecorder
+        panelController = PanelWindowController(appState: state, recorder: audioRecorder)
         onboardingController = OnboardingWindowController(permissions: perms)
         super.init()
 

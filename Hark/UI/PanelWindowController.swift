@@ -13,10 +13,12 @@ final class PanelWindowController: NSObject {
     private static let cornerRadius: CGFloat = 14
 
     private let appState: AppState
+    private let recorder: AudioRecorder
     private var panel: NSPanel?
 
-    init(appState: AppState) {
+    init(appState: AppState, recorder: AudioRecorder) {
         self.appState = appState
+        self.recorder = recorder
         super.init()
         observeVisibility()
     }
@@ -77,7 +79,7 @@ final class PanelWindowController: NSObject {
         panel.animationBehavior = .utilityWindow
         panel.delegate = self
 
-        let host = NSHostingView(rootView: PanelRootView())
+        let host = NSHostingView(rootView: PanelRootView(recorder: recorder))
         host.wantsLayer = true
         host.layer?.cornerRadius = Self.cornerRadius
         host.layer?.masksToBounds = true

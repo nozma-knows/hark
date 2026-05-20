@@ -1,7 +1,10 @@
 import AppKit
+import OSLog
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private static let logger = Logger(subsystem: "co.milbo.hark", category: "AppDelegate")
+
     let appState: AppState
     let permissions: PermissionsManager
     let hotkey: HotkeyManager
@@ -22,12 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onboardingController = OnboardingWindowController(permissions: perms)
         super.init()
 
-        // The hotkey is the second entrypoint to the panel (the menu is the
-        // first). Route both through the same gated method so the permission
-        // check happens in exactly one place.
-        hotkey.onKeyDown = { [weak self] in
-            self?.requestPanelToggle()
-        }
+        hotkey.onKeyDown = { [weak self] in self?.handleHotkeyDown() }
+        hotkey.onKeyUp = { [weak self] in self?.handleHotkeyUp() }
     }
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -48,16 +47,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         onboardingController.showIfNeeded()
     }
 
-    /// User-initiated request to toggle the floating panel. If any required
-    /// permission is missing, route to onboarding instead — the panel itself
-    /// is useless until the mic + global hotkey are wired through, and forcing
-    /// the gate here keeps later flows (record / hotkey) honest by default.
+    /// Menu-driven panel toggle. Doesn't start/stop recording — the menu's job
+    /// is to give the user a visual escape hatch; the hotkey is the dictation
+    /// trigger.
     func requestPanelToggle() {
+        guard ensureReady() else { return }
+        appState.isPanelVisible.toggle()
+    }
+
+    // MARK: - Hotkey state machine
+
+    private func handleHotkeyDown() {
+        guard ensureReady() else { return }
+        switch hotkey.mode {
+        case .hold:
+            startRecording()
+        case .toggle:
+            if recorder.state == .recording {
+                stopRecording()
+            } else {
+                startRecording()
+            }
+        }
+    }
+
+    private func handleHotkeyUp() {
+        guard hotkey.mode == .hold, recorder.state == .recording else { return }
+        stopRecording()
+    }
+
+    private func startRecording() {
+        do {
+            try recorder.start()
+            appState.isPanelVisible = true
+        } catch {
+            Self.logger.error("Failed to start recording: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    private func stopRecording() {
+        _ = recorder.stop()
+        // PR 6 wires these samples into WhisperKit. For PR 5 the samples
+        // are intentionally discarded — the goal is to validate that the
+        // capture → UI loop feels right.
+    }
+
+    /// Common precondition for any action that needs mic + accessibility.
+    /// Routes to onboarding if anything's missing and returns false.
+    private func ensureReady() -> Bool {
         permissions.refresh()
         guard permissions.allGranted else {
             onboardingController.show()
-            return
+            return false
         }
-        appState.isPanelVisible.toggle()
+        return true
     }
 }

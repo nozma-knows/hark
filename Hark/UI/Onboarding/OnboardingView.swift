@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 
 struct OnboardingView: View {
     @Bindable var permissions: PermissionsManager
+    @Bindable var claudeAuth: ClaudeAuth
     let onComplete: () -> Void
 
     var body: some View {
@@ -13,6 +15,7 @@ struct OnboardingView: View {
             VStack(spacing: 12) {
                 microphoneCard
                 accessibilityCard
+                claudeCard
             }
             .padding(.horizontal, 24)
 
@@ -28,7 +31,7 @@ struct OnboardingView: View {
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
         }
-        .frame(width: 480, height: 520)
+        .frame(width: 480, height: 600)
     }
 
     private var header: some View {
@@ -38,7 +41,7 @@ struct OnboardingView: View {
                 .foregroundStyle(.tint)
             Text("Welcome to Hark")
                 .font(.title2.weight(.semibold))
-            Text("Two macOS permissions, then you're ready to dictate.")
+            Text("Two macOS permissions plus Claude auth, then you're set.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -64,6 +67,17 @@ struct OnboardingView: View {
             status: axCardStatus,
             actionLabel: axCardActionLabel,
             action: axCardAction
+        )
+    }
+
+    private var claudeCard: some View {
+        PermissionCard(
+            systemImage: "sparkles",
+            title: "Claude auth",
+            description: claudeDescription,
+            status: claudeCardStatus,
+            actionLabel: claudeCardActionLabel,
+            action: claudeCardAction
         )
     }
 
@@ -114,11 +128,15 @@ struct OnboardingView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .keyboardShortcut(.defaultAction)
+            // Continue gates on the two OS permissions only. Claude auth is
+            // strongly recommended but skippable — without it the user can
+            // still test recording / transcription; they just can't draft
+            // tickets until they wire up auth.
             .disabled(!permissions.allGranted)
         }
     }
 
-    // MARK: - Card state mapping
+    // MARK: - Mic card state mapping
 
     private var micCardStatus: PermissionCard.Status {
         switch permissions.microphone {
@@ -147,6 +165,8 @@ struct OnboardingView: View {
         }
     }
 
+    // MARK: - Accessibility card state mapping
+
     private var axCardStatus: PermissionCard.Status {
         permissions.accessibilityTrusted ? .granted : .pending
     }
@@ -162,8 +182,49 @@ struct OnboardingView: View {
         }
     }
 
+    // MARK: - Claude card state mapping
+
+    private var claudeCardStatus: PermissionCard.Status {
+        switch claudeAuth.method {
+        case .subscription, .apiKey: .granted
+        case .none: .pending
+        }
+    }
+
+    private var claudeDescription: String {
+        switch claudeAuth.method {
+        case let .subscription(source): "Subscription detected (\(source.rawValue))."
+        case let .apiKey(source): "ANTHROPIC_API_KEY detected (\(source.rawValue))."
+        case .none where claudeAuth.claudeBinaryPath != nil:
+            "Generate an OAuth token with the `claude` CLI."
+        case .none:
+            "Install Claude Code or set ANTHROPIC_API_KEY."
+        }
+    }
+
+    private var claudeCardActionLabel: String {
+        switch claudeAuth.method {
+        case .subscription, .apiKey: "Connected"
+        case .none where claudeAuth.claudeBinaryPath != nil: "Generate Token"
+        case .none: "Install"
+        }
+    }
+
+    private func claudeCardAction() {
+        switch claudeAuth.method {
+        case .subscription, .apiKey:
+            break
+        case .none:
+            if claudeAuth.claudeBinaryPath != nil {
+                claudeAuth.runSetupToken()
+            } else if let url = URL(string: "https://claude.com/code") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
     private func relaunch() {
-        guard let bundleURL = Bundle.main.bundleURL as URL? else { return }
+        let bundleURL = Bundle.main.bundleURL
         let config = NSWorkspace.OpenConfiguration()
         config.createsNewApplicationInstance = true
         NSWorkspace.shared.openApplication(at: bundleURL, configuration: config) { _, _ in
@@ -175,5 +236,9 @@ struct OnboardingView: View {
 }
 
 #Preview {
-    OnboardingView(permissions: PermissionsManager(), onComplete: {})
+    OnboardingView(
+        permissions: PermissionsManager(),
+        claudeAuth: ClaudeAuth(),
+        onComplete: {}
+    )
 }

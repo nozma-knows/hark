@@ -93,6 +93,21 @@ final class ClaudeAuth {
         return FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) && isDir.boolValue
     }
 
+    /// Open Terminal.app and run `claude setup-token` against the detected
+    /// CLI path. AppleScript-driven so the user can react to the interactive
+    /// browser flow that follows.
+    func runSetupToken() {
+        guard let path = claudeBinaryPath else { return }
+        let source = """
+        tell application "Terminal"
+            activate
+            do script "\(path) setup-token"
+        end tell
+        """
+        var error: NSDictionary?
+        NSAppleScript(source: source)?.executeAndReturnError(&error)
+    }
+
     private static func findClaudeBinary() -> String? {
         let candidates = [
             "/opt/homebrew/bin/claude",

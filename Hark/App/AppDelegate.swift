@@ -39,7 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recorder: audioRecorder,
             transcriber: transcriberInstance
         )
-        onboardingController = OnboardingWindowController(permissions: perms)
+        onboardingController = OnboardingWindowController(
+            permissions: perms,
+            claudeAuth: claudeAuthInstance
+        )
         super.init()
 
         hotkey.onKeyDown = { [weak self] in self?.handleHotkeyDown() }

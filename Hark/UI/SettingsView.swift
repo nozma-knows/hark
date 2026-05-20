@@ -105,7 +105,7 @@ private struct ClaudePane: View {
                 Section("Get set up") {
                     if let path = auth.claudeBinaryPath {
                         Button("Generate OAuth token in Terminal") {
-                            Self.runSetupToken(at: path)
+                            auth.runSetupToken()
                         }
                         .buttonStyle(.borderedProminent)
                         Text("Sign in with Anthropic in your browser; the token lands in ~/.claude/, Hark picks it up.")
@@ -154,19 +154,6 @@ private struct ClaudePane: View {
         // Verified link to Claude Code product page.
         // swiftlint:disable:next force_unwrapping
         URL(string: "https://claude.com/code")!
-    }
-
-    /// Open Terminal.app and run `claude setup-token`. Uses AppleScript so
-    /// the user sees the interactive prompts and can react in their browser.
-    static func runSetupToken(at claudeBinaryPath: String) {
-        let source = """
-        tell application "Terminal"
-            activate
-            do script "\(claudeBinaryPath) setup-token"
-        end tell
-        """
-        var error: NSDictionary?
-        NSAppleScript(source: source)?.executeAndReturnError(&error)
     }
 }
 

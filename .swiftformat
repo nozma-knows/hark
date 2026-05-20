@@ -1,0 +1,61 @@
+# SwiftFormat config for Hark — kept compatible with SwiftLint
+--swiftversion 5.10
+--minversion 0.55
+
+# Layout
+--indent 4
+--maxwidth 120
+--linebreaks lf
+--allman false
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--wrapreturntype if-multiline
+--wrapconditions before-first
+--closingparen balanced
+
+# Whitespace
+--trimwhitespace always
+--emptybraces no-space
+--ranges no-space
+--operatorfunc spaced
+--commas inline
+--semicolons never
+--elseposition same-line
+--guardelse same-line
+
+# Imports — pure alphabetical to match SwiftLint sorted_imports
+--import-grouping alpha
+--ifdef no-indent
+
+# Self
+--self remove
+--selfrequired
+--patternlet hoist
+
+# Misc
+--header ignore
+--marktypes never
+--extensionacl on-declarations
+--funcattributes prev-line
+--typeattributes prev-line
+--storedvarattrs same-line
+--computedvarattrs prev-line
+
+# Exclusions
+--exclude Hark/Generated,Hark.xcodeproj,build,DerivedData,.build,Sidecar/node_modules,Sidecar/dist
+
+# Enable extras
+--enable blankLinesBetweenScopes
+--enable redundantBackticks
+--enable redundantReturn
+--enable redundantSelf
+--enable sortImports
+--enable strongOutlets
+--enable trailingCommas
+--enable yodaConditions
+--enable preferKeyPath
+--enable redundantOptionalBinding
+--enable redundantParens
+--enable redundantInit
+--enable spaceAroundOperators

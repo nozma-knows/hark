@@ -1,5 +1,5 @@
-import XCTest
 @testable import Hark
+import XCTest
 
 final class HarkTests: XCTestCase {
     func testHarkBundleLoads() {

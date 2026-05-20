@@ -7,15 +7,22 @@ import SwiftUI
 /// (a) appear without taking focus from the user's current app,
 /// (b) float above all standard windows on every Space,
 /// (c) be summoned/dismissed declaratively by toggling `AppState.isPanelVisible`.
+///
+/// Because the panel is non-activating it never receives key events through
+/// the responder chain — ESC dismissal is wired via a global `NSEvent`
+/// monitor active only while the panel is visible.
 @MainActor
 final class PanelWindowController: NSObject {
     private static let defaultSize = NSSize(width: 560, height: 320)
     private static let cornerRadius: CGFloat = 14
+    private static let escKeyCode: UInt16 = 53
 
     private let appState: AppState
     private let recorder: AudioRecorder
     private let transcriber: Transcriber
     private var panel: NSPanel?
+    private var globalEscMonitor: Any?
+    private var localEscMonitor: Any?
 
     init(appState: AppState, recorder: AudioRecorder, transcriber: Transcriber) {
         self.appState = appState
@@ -24,6 +31,10 @@ final class PanelWindowController: NSObject {
         super.init()
         observeVisibility()
     }
+
+    // No deinit cleanup — this controller is owned by AppDelegate and lives
+    // for the whole process lifetime; monitors are torn down each time the
+    // panel hides via stopEscMonitor(), and the OS reclaims the rest on exit.
 
     private func observeVisibility() {
         // `withObservationTracking` fires once per change; re-register inside
@@ -52,9 +63,11 @@ final class PanelWindowController: NSObject {
         self.panel = panel
         positionOnActiveScreen(panel)
         panel.makeKeyAndOrderFront(nil)
+        startEscMonitor()
     }
 
     private func dismiss() {
+        stopEscMonitor()
         panel?.orderOut(nil)
     }
 
@@ -106,12 +119,55 @@ final class PanelWindowController: NSObject {
         )
         panel.setFrameOrigin(origin)
     }
+
+    // MARK: - ESC dismissal
+
+    /// Start watching for ESC keystrokes. We need both monitors because the
+    /// non-activating panel doesn't take key focus from the frontmost app:
+    /// global covers ESC presses while another app is focused, local covers
+    /// the edge case where Hark itself is focused (e.g. Settings open).
+    private func startEscMonitor() {
+        stopEscMonitor()
+        globalEscMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == Self.escKeyCode else { return }
+            Task { @MainActor [weak self] in
+                self?.handleEscape()
+            }
+        }
+        localEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == Self.escKeyCode else { return event }
+            Task { @MainActor [weak self] in
+                self?.handleEscape()
+            }
+            return nil
+        }
+    }
+
+    private func stopEscMonitor() {
+        if let monitor = globalEscMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalEscMonitor = nil
+        }
+        if let monitor = localEscMonitor {
+            NSEvent.removeMonitor(monitor)
+            localEscMonitor = nil
+        }
+    }
+
+    private func handleEscape() {
+        // Don't dismiss mid-recording — the hotkey-release path is the right
+        // way to stop a hold-to-talk session, and we'd lose the audio.
+        if recorder.state == .recording { return }
+        appState.transcript = nil
+        appState.isPanelVisible = false
+    }
 }
 
 extension PanelWindowController: NSWindowDelegate {
     /// Mirror external closes (e.g., system-initiated) back into `AppState`
     /// so the menu label and any future bindings stay correct.
     func windowWillClose(_: Notification) {
+        stopEscMonitor()
         if appState.isPanelVisible {
             appState.isPanelVisible = false
         }

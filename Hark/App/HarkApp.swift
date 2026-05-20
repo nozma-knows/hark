@@ -10,6 +10,8 @@ struct HarkApp: App {
         MenuBarExtra {
             HarkMenu(appState: delegate.appState) {
                 delegate.requestPanelToggle()
+            } onShowWelcome: {
+                delegate.onboardingController.show()
             }
         } label: {
             Image(systemName: "waveform")
@@ -30,6 +32,7 @@ struct HarkApp: App {
 private struct HarkMenu: View {
     @Bindable var appState: AppState
     let onTogglePanel: () -> Void
+    let onShowWelcome: () -> Void
 
     @Environment(\.openSettings)
     private var openSettings
@@ -46,6 +49,10 @@ private struct HarkMenu: View {
             openSettings()
         }
         .keyboardShortcut(",", modifiers: [.command])
+
+        Button("Welcome…") {
+            onShowWelcome()
+        }
 
         Button("About Hark") {
             NSApp.orderFrontStandardAboutPanel(nil)

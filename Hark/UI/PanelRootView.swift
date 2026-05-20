@@ -61,6 +61,21 @@ private struct IdleView: View {
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
+            HStack(spacing: 6) {
+                Text("Press")
+                Text("esc")
+                    .font(.caption.monospaced())
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(.quaternary)
+                    )
+                Text("to dismiss")
+            }
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .padding(.top, 4)
         }
         .padding(32)
     }

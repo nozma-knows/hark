@@ -3,9 +3,12 @@ import SwiftUI
 
 @main
 struct HarkApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self)
+    private var delegate
+
     var body: some Scene {
         MenuBarExtra {
-            HarkMenu()
+            HarkMenu(panelController: delegate.panelController)
         } label: {
             Image(systemName: "waveform")
                 .accessibilityLabel("Hark")
@@ -19,10 +22,19 @@ struct HarkApp: App {
 }
 
 private struct HarkMenu: View {
+    let panelController: PanelWindowController
+
     @Environment(\.openSettings)
     private var openSettings
 
     var body: some View {
+        Button("Show Hark") {
+            panelController.toggle()
+        }
+        .keyboardShortcut(.space, modifiers: [.control, .option])
+
+        Divider()
+
         Button("Settings…") {
             openSettings()
         }

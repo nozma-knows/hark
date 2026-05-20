@@ -29,15 +29,27 @@ The Xcode project is generated from [`project.yml`](./project.yml) via
 
 ```sh
 # One-time tooling
-brew install xcodegen swiftlint swiftformat
+brew install xcodegen swiftlint swiftformat openssl@3
 
-# Generate the project and install git hooks
-xcodegen generate
+# Set up stable dev signing — keeps macOS TCC (Accessibility, Microphone)
+# grants across rebuilds. Creates a self-signed cert in your login keychain.
+./scripts/setup-dev-signing.sh
+
+# Install git hooks (lint + format on commit)
 ./scripts/install-hooks.sh
+
+# Generate the Xcode project from project.yml
+xcodegen generate
 
 # Open in Xcode
 open Hark.xcodeproj
 ```
+
+> **Why the dev signing step?** Hark needs Accessibility and Microphone
+> permissions. Without a stable code-signing identity, macOS TCC ties trust
+> to each rebuild's `cdhash` — you'd re-grant on every change. The script
+> creates a `Hark Dev` self-signed cert; `project.yml` is pinned to that
+> identity. CI builds fall back to ad-hoc via xcodebuild overrides.
 
 Or build from the CLI:
 

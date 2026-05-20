@@ -22,7 +22,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let audioRecorder = AudioRecorder()
         let transcriberInstance = Transcriber()
         let claudeAuthInstance = ClaudeAuth()
-        let sidecarInstance = AgentSidecar()
+        let sidecarInstance = AgentSidecar(
+            environmentProvider: { [claudeAuthInstance] in
+                claudeAuthInstance.sidecarEnvironment()
+            }
+        )
         appState = state
         permissions = perms
         hotkey = hotkeyManager

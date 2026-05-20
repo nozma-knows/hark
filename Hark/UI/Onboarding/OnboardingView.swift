@@ -108,11 +108,6 @@ struct OnboardingView: View {
 
             Spacer()
 
-            Button("Check again") {
-                permissions.refresh()
-            }
-            .buttonStyle(.bordered)
-
             Button("Continue") {
                 onComplete()
             }

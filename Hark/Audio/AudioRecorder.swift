@@ -29,10 +29,16 @@ final class AudioRecorder {
     private(set) var level: Float = 0
 
     private static let targetSampleRate: Double = 16000
+    static let maxDuration: TimeInterval = 60
+    private static let maxSampleCount = Int(targetSampleRate * maxDuration)
 
     private let engine = AVAudioEngine()
     private let targetFormat: AVAudioFormat
 
+    /// 16 kHz mono Float32 samples captured so far this session.
+    /// Capped at `maxDuration` seconds (`maxSampleCount` Float values) —
+    /// once full, the oldest samples are dropped FIFO so the buffer holds a
+    /// sliding 60 s window rather than growing without bound.
     private var samples: [Float] = []
     private var startTime: Date?
     private var durationTimer: Timer?
@@ -110,6 +116,9 @@ final class AudioRecorder {
 
     private func ingest(_ newSamples: [Float], level: Float) {
         samples.append(contentsOf: newSamples)
+        if samples.count > Self.maxSampleCount {
+            samples.removeFirst(samples.count - Self.maxSampleCount)
+        }
         self.level = level
     }
 

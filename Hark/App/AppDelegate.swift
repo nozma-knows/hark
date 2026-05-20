@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState: AppState
     let permissions: PermissionsManager
     let panelController: PanelWindowController
+    let onboardingController: OnboardingWindowController
 
     override init() {
         let state = AppState()
@@ -12,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState = state
         permissions = perms
         panelController = PanelWindowController(appState: state)
+        onboardingController = OnboardingWindowController(permissions: perms)
         super.init()
     }
 
@@ -29,5 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // re-poll whenever Hark returns to the foreground.
             MainActor.assumeIsolated { self?.permissions.refresh() }
         }
+
+        onboardingController.showIfNeeded()
     }
 }

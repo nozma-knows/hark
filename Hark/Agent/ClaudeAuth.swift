@@ -71,7 +71,8 @@ final class ClaudeAuth {
         } else {
             method = .none
         }
-        Self.logger.debug("Detected auth method: \(String(describing: method), privacy: .public)")
+        let described = String(describing: method)
+        Self.logger.debug("Detected auth method: \(described, privacy: .public)")
     }
 
     /// Environment variables to inject into the sidecar `Process` so the

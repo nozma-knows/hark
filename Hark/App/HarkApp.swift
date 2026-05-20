@@ -18,7 +18,11 @@ struct HarkApp: App {
         .menuBarExtraStyle(.menu)
 
         Settings {
-            SettingsView(hotkey: delegate.hotkey, transcriber: delegate.transcriber)
+            SettingsView(
+                hotkey: delegate.hotkey,
+                transcriber: delegate.transcriber,
+                claudeAuth: delegate.claudeAuth
+            )
         }
     }
 }

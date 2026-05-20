@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let hotkey: HotkeyManager
     let recorder: AudioRecorder
     let transcriber: Transcriber
+    let claudeAuth: ClaudeAuth
     let sidecar: AgentSidecar
     let panelController: PanelWindowController
     let onboardingController: OnboardingWindowController
@@ -20,12 +21,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hotkeyManager = HotkeyManager()
         let audioRecorder = AudioRecorder()
         let transcriberInstance = Transcriber()
+        let claudeAuthInstance = ClaudeAuth()
         let sidecarInstance = AgentSidecar()
         appState = state
         permissions = perms
         hotkey = hotkeyManager
         recorder = audioRecorder
         transcriber = transcriberInstance
+        claudeAuth = claudeAuthInstance
         sidecar = sidecarInstance
         panelController = PanelWindowController(
             appState: state,
@@ -49,9 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            // Permissions can flip silently while the user is in System Settings;
-            // re-poll whenever Hark returns to the foreground.
-            MainActor.assumeIsolated { self?.permissions.refresh() }
+            // Permissions and Claude auth can flip silently while the user is
+            // in System Settings / Terminal; re-poll on foreground return.
+            MainActor.assumeIsolated {
+                self?.permissions.refresh()
+                self?.claudeAuth.refresh()
+            }
         }
 
         onboardingController.showIfNeeded()

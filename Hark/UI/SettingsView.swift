@@ -1,9 +1,11 @@
+import AppKit
 import KeyboardShortcuts
 import SwiftUI
 
 struct SettingsView: View {
     let hotkey: HotkeyManager
     let transcriber: Transcriber
+    let claudeAuth: ClaudeAuth
 
     var body: some View {
         TabView {
@@ -13,7 +15,7 @@ struct SettingsView: View {
                 .tabItem { Label("Hotkey", systemImage: "keyboard") }
             LinearPane()
                 .tabItem { Label("Linear", systemImage: "rectangle.stack") }
-            ClaudePane()
+            ClaudePane(auth: claudeAuth)
                 .tabItem { Label("Claude", systemImage: "sparkles") }
             ModelsPane(transcriber: transcriber)
                 .tabItem { Label("Models", systemImage: "cpu") }
@@ -76,12 +78,95 @@ private struct LinearPane: View {
 }
 
 private struct ClaudePane: View {
+    @Bindable var auth: ClaudeAuth
+
     var body: some View {
-        SettingsPlaceholder(
-            systemImage: "sparkles",
-            title: "Claude",
-            detail: "Detected auth method (subscription OAuth or your own ANTHROPIC_API_KEY)."
-        )
+        Form {
+            Section("Auth") {
+                HStack(spacing: 14) {
+                    Image(systemName: statusIcon)
+                        .font(.system(size: 28))
+                        .foregroundStyle(statusColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(auth.method.shortLabel)
+                            .font(.headline)
+                        Text(sourceDetail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Refresh") { auth.refresh() }
+                        .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 4)
+            }
+
+            if !auth.method.isResolved {
+                Section("Get set up") {
+                    if let path = auth.claudeBinaryPath {
+                        Button("Generate OAuth token in Terminal") {
+                            Self.runSetupToken(at: path)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Text("Sign in with Anthropic in your browser; the token lands in ~/.claude/, Hark picks it up.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Link("Install Claude Code", destination: claudeCodeURL)
+                            .controlSize(.regular)
+                        Text(
+                            "Or export ANTHROPIC_API_KEY in your shell, then Refresh. Hark never stores tokens itself."
+                        )
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    private var statusIcon: String {
+        switch auth.method {
+        case .subscription: "checkmark.seal.fill"
+        case .apiKey: "key.fill"
+        case .none: "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch auth.method {
+        case .subscription, .apiKey: .green
+        case .none: .orange
+        }
+    }
+
+    private var sourceDetail: String {
+        switch auth.method {
+        case let .subscription(source): "Source: \(source.rawValue)"
+        case let .apiKey(source): "Source: \(source.rawValue)"
+        case .none: "Hark needs a Claude credential to plan tickets."
+        }
+    }
+
+    private var claudeCodeURL: URL {
+        // Verified link to Claude Code product page.
+        // swiftlint:disable:next force_unwrapping
+        URL(string: "https://claude.com/code")!
+    }
+
+    /// Open Terminal.app and run `claude setup-token`. Uses AppleScript so
+    /// the user sees the interactive prompts and can react in their browser.
+    static func runSetupToken(at claudeBinaryPath: String) {
+        let source = """
+        tell application "Terminal"
+            activate
+            do script "\(claudeBinaryPath) setup-token"
+        end tell
+        """
+        var error: NSDictionary?
+        NSAppleScript(source: source)?.executeAndReturnError(&error)
     }
 }
 
@@ -243,5 +328,9 @@ private struct SettingsPlaceholder: View {
 }
 
 #Preview {
-    SettingsView(hotkey: HotkeyManager(), transcriber: Transcriber())
+    SettingsView(
+        hotkey: HotkeyManager(),
+        transcriber: Transcriber(),
+        claudeAuth: ClaudeAuth()
+    )
 }

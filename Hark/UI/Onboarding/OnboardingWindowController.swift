@@ -4,12 +4,20 @@ import SwiftUI
 /// Owns the standalone onboarding NSWindow. Unlike the floating panel, this
 /// window is a regular titled window that activates Hark when shown — first
 /// run is one of the few moments we *do* want focus.
+///
+/// While the window is visible we poll `AXIsProcessTrusted` on a half-second
+/// timer. `NSApplication.didBecomeActiveNotification` is not reliable for
+/// accessory (`LSUIElement: true`) apps when the onboarding window stays
+/// in front of System Settings — and TCC's notifications aren't public.
+/// Polling is the robust fallback.
 @MainActor
 final class OnboardingWindowController: NSObject {
     private static let windowSize = NSSize(width: 480, height: 520)
+    private static let pollInterval: TimeInterval = 0.5
 
     private let permissions: PermissionsManager
     private var window: NSWindow?
+    private var pollTimer: Timer?
 
     init(permissions: PermissionsManager) {
         self.permissions = permissions
@@ -39,9 +47,11 @@ final class OnboardingWindowController: NSObject {
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        startPolling()
     }
 
     func close() {
+        stopPolling()
         window?.close()
     }
 
@@ -64,6 +74,22 @@ final class OnboardingWindowController: NSObject {
         window.contentView = NSHostingView(rootView: content)
         return window
     }
+
+    private func startPolling() {
+        stopPolling()
+        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.permissions.refresh()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
+    }
+
+    private func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
 }
 
 extension OnboardingWindowController: NSWindowDelegate {
@@ -71,5 +97,6 @@ extension OnboardingWindowController: NSWindowDelegate {
         // Closing the window with permissions still missing is allowed — the
         // user can re-open it from the menu later (we'll add that surface in
         // a future PR). For now we just let it close.
+        stopPolling()
     }
 }

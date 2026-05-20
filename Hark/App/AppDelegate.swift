@@ -24,7 +24,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey = hotkeyManager
         recorder = audioRecorder
         transcriber = transcriberInstance
-        panelController = PanelWindowController(appState: state, recorder: audioRecorder)
+        panelController = PanelWindowController(
+            appState: state,
+            recorder: audioRecorder,
+            transcriber: transcriberInstance
+        )
         onboardingController = OnboardingWindowController(permissions: perms)
         super.init()
 
@@ -85,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startRecording() {
+        appState.transcript = nil
         do {
             try recorder.start()
             appState.isPanelVisible = true
@@ -94,10 +99,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func stopRecording() {
-        _ = recorder.stop()
-        // PR 6 wires these samples into WhisperKit. For PR 5 the samples
-        // are intentionally discarded — the goal is to validate that the
-        // capture → UI loop feels right.
+        let samples = recorder.stop()
+        guard !samples.isEmpty else { return }
+        Task { [weak self] in
+            await self?.transcribeAndShow(samples)
+        }
+    }
+
+    private func transcribeAndShow(_ samples: [Float]) async {
+        do {
+            let text = try await transcriber.transcribe(samples: samples)
+            appState.transcript = text.isEmpty ? nil : text
+        } catch {
+            Self.logger.error("Transcribe failed: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Common precondition for any action that needs mic + accessibility.

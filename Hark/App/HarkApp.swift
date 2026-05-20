@@ -18,7 +18,7 @@ struct HarkApp: App {
         .menuBarExtraStyle(.menu)
 
         Settings {
-            SettingsView()
+            SettingsView(hotkey: delegate.hotkey)
         }
     }
 }

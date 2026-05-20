@@ -1,11 +1,14 @@
+import KeyboardShortcuts
 import SwiftUI
 
 struct SettingsView: View {
+    let hotkey: HotkeyManager
+
     var body: some View {
         TabView {
             GeneralPane()
                 .tabItem { Label("General", systemImage: "gearshape") }
-            HotkeyPane()
+            HotkeyPane(hotkey: hotkey)
                 .tabItem { Label("Hotkey", systemImage: "keyboard") }
             LinearPane()
                 .tabItem { Label("Linear", systemImage: "rectangle.stack") }
@@ -18,7 +21,7 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Panes (placeholders; populated in later PRs)
+// MARK: - Panes
 
 private struct GeneralPane: View {
     var body: some View {
@@ -31,12 +34,33 @@ private struct GeneralPane: View {
 }
 
 private struct HotkeyPane: View {
+    @Bindable var hotkey: HotkeyManager
+
     var body: some View {
-        SettingsPlaceholder(
-            systemImage: "keyboard",
-            title: "Hotkey",
-            detail: "Choose the global shortcut and whether it's hold-to-talk or toggle."
-        )
+        Form {
+            Section {
+                KeyboardShortcuts.Recorder("Global shortcut:", name: .summonPanel)
+            } footer: {
+                Text("Requires Accessibility permission. Default is ⌃⌥ Space.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                Picker("Mode", selection: $hotkey.mode) {
+                    ForEach(HotkeyMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } footer: {
+                Text(hotkey.mode.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
     }
 }
 
@@ -96,5 +120,5 @@ private struct SettingsPlaceholder: View {
 }
 
 #Preview {
-    SettingsView()
+    SettingsView(hotkey: HotkeyManager())
 }

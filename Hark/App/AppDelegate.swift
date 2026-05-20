@@ -4,17 +4,27 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState: AppState
     let permissions: PermissionsManager
+    let hotkey: HotkeyManager
     let panelController: PanelWindowController
     let onboardingController: OnboardingWindowController
 
     override init() {
         let state = AppState()
         let perms = PermissionsManager()
+        let hotkeyManager = HotkeyManager()
         appState = state
         permissions = perms
+        hotkey = hotkeyManager
         panelController = PanelWindowController(appState: state)
         onboardingController = OnboardingWindowController(permissions: perms)
         super.init()
+
+        // The hotkey is the second entrypoint to the panel (the menu is the
+        // first). Route both through the same gated method so the permission
+        // check happens in exactly one place.
+        hotkey.onKeyDown = { [weak self] in
+            self?.requestPanelToggle()
+        }
     }
 
     func applicationDidFinishLaunching(_: Notification) {

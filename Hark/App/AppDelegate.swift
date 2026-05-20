@@ -34,4 +34,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         onboardingController.showIfNeeded()
     }
+
+    /// User-initiated request to toggle the floating panel. If any required
+    /// permission is missing, route to onboarding instead — the panel itself
+    /// is useless until the mic + global hotkey are wired through, and forcing
+    /// the gate here keeps later flows (record / hotkey) honest by default.
+    func requestPanelToggle() {
+        permissions.refresh()
+        guard permissions.allGranted else {
+            onboardingController.show()
+            return
+        }
+        appState.isPanelVisible.toggle()
+    }
 }

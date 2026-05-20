@@ -1,35 +1,57 @@
 import AppKit
+import Observation
 import SwiftUI
 
 /// Owns the floating, borderless, non-activating `NSPanel` that hosts Hark's
 /// transient UI. The panel lives outside SwiftUI's scene graph so it can:
 /// (a) appear without taking focus from the user's current app,
 /// (b) float above all standard windows on every Space,
-/// (c) be summoned/dismissed imperatively from anywhere in the app.
+/// (c) be summoned/dismissed declaratively by toggling `AppState.isPanelVisible`.
 @MainActor
-final class PanelWindowController {
+final class PanelWindowController: NSObject {
     private static let defaultSize = NSSize(width: 560, height: 320)
     private static let cornerRadius: CGFloat = 14
 
+    private let appState: AppState
     private var panel: NSPanel?
 
-    var isVisible: Bool {
-        panel?.isVisible ?? false
+    init(appState: AppState) {
+        self.appState = appState
+        super.init()
+        observeVisibility()
     }
 
-    func show() {
+    private func observeVisibility() {
+        // `withObservationTracking` fires once per change; re-register inside
+        // `onChange` to keep listening for subsequent toggles.
+        withObservationTracking {
+            _ = appState.isPanelVisible
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                syncPanelVisibility()
+                observeVisibility()
+            }
+        }
+    }
+
+    private func syncPanelVisibility() {
+        if appState.isPanelVisible {
+            present()
+        } else {
+            dismiss()
+        }
+    }
+
+    private func present() {
         let panel = panel ?? makePanel()
         self.panel = panel
         positionOnActiveScreen(panel)
         panel.makeKeyAndOrderFront(nil)
     }
 
-    func hide() {
+    private func dismiss() {
         panel?.orderOut(nil)
-    }
-
-    func toggle() {
-        if isVisible { hide() } else { show() }
     }
 
     private func makePanel() -> NSPanel {
@@ -53,6 +75,7 @@ final class PanelWindowController {
         panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .utilityWindow
+        panel.delegate = self
 
         let host = NSHostingView(rootView: PanelRootView())
         host.wantsLayer = true
@@ -72,5 +95,15 @@ final class PanelWindowController {
             y: visible.maxY - size.height - visible.height * 0.25
         )
         panel.setFrameOrigin(origin)
+    }
+}
+
+extension PanelWindowController: NSWindowDelegate {
+    /// Mirror external closes (e.g., system-initiated) back into `AppState`
+    /// so the menu label and any future bindings stay correct.
+    func windowWillClose(_: Notification) {
+        if appState.isPanelVisible {
+            appState.isPanelVisible = false
+        }
     }
 }

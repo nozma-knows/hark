@@ -1,4 +1,5 @@
-# Xcode
+# ---------- macOS app ----------
+# Xcode build artifacts (unanchored — catches /macos/build/, /build/, anywhere)
 build/
 DerivedData/
 *.xcuserstate
@@ -11,12 +12,12 @@ xcuserdata/
 *.dSYM.zip
 *.dSYM
 
-# Generated Xcode project (source of truth is project.yml)
+# Generated Xcode project (source of truth is macos/project.yml)
 *.xcodeproj
 *.xcworkspace
 
-# Generated Info.plist (XcodeGen writes to Hark/Generated/)
-Hark/Generated/
+# Generated Info.plist (XcodeGen writes to macos/Hark/Generated/)
+macos/Hark/Generated/
 
 # Swift Package Manager
 .build/
@@ -24,13 +25,31 @@ Hark/Generated/
 Package.resolved
 
 # Bun / Node (Sidecar/)
-Sidecar/node_modules/
-Sidecar/dist/
-Sidecar/bun.lockb.local
+macos/Sidecar/node_modules/
+macos/Sidecar/dist/
+macos/Sidecar/bun.lockb.local
 
 # Compiled sidecar artifact (bundled at build time)
-Hark/Resources/Sidecar/
+macos/Hark/Resources/Sidecar/
 
+# Notarization artifacts
+*.dmg
+*.pkg
+notarize-output/
+
+# ---------- Web (Next.js) ----------
+web/.next/
+web/out/
+web/node_modules/
+web/.vercel/
+web/.env*.local
+
+# ---------- Video (Remotion) ----------
+video/node_modules/
+video/out/
+video/.remotion/
+
+# ---------- General ----------
 # macOS
 .DS_Store
 *.swp
@@ -53,8 +72,3 @@ Hark/Resources/Sidecar/
 # Logs and crash reports
 *.log
 crash-reports/
-
-# Notarization artifacts
-*.dmg
-*.pkg
-notarize-output/

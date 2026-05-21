@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- "developer-id" packages the archive for distribution OUTSIDE the
+         Mac App Store, signed with the Developer ID Application cert. This
+         is the method that produces a notarizable .app. -->
+    <key>method</key>
+    <string>developer-id</string>
+
+    <key>teamID</key>
+    <string>HFBJTWK7B8</string>
+
+    <key>signingStyle</key>
+    <string>manual</string>
+
+    <key>signingCertificate</key>
+    <string>Developer ID Application</string>
+
+    <!-- Strip Swift symbols for a smaller .app. Doesn't affect crash logs
+         (those are read against the original dSYM). -->
+    <key>stripSwiftSymbols</key>
+    <true/>
+</dict>
+</plist>

@@ -1,0 +1,103 @@
+import AppKit
+import Observation
+import SwiftUI
+
+/// Owns the always-visible Wispr Flow-style pill panel at the bottom-center
+/// of the active screen. The panel:
+/// - is borderless + non-activating (clicks pass through outside the pill)
+/// - floats above all standard windows on every Space
+/// - doesn't take focus from the user's current app
+/// - resizes its frame as the SwiftUI content grows / shrinks between
+///   idle / recording / processing / transcript states
+@MainActor
+final class PanelWindowController: NSObject {
+    private static let panelHeight: CGFloat = 72
+    private static let panelWidth: CGFloat = 680
+    private static let bottomInset: CGFloat = 0
+
+    private let appState: AppState
+    private let recorder: AudioRecorder
+    private let transcriber: Transcriber
+    private var panel: NSPanel?
+
+    init(appState: AppState, recorder: AudioRecorder, transcriber: Transcriber) {
+        self.appState = appState
+        self.recorder = recorder
+        self.transcriber = transcriber
+        super.init()
+    }
+
+    /// Show the pill on app launch. Always visible from this point on; the
+    /// content reflects the active state via SwiftUI bindings.
+    func showAlways() {
+        let panel = panel ?? makePanel()
+        self.panel = panel
+        positionOnActiveScreen(panel)
+        panel.orderFrontRegardless()
+        // Reposition on screen changes (display arrangement, resolution).
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let panel = self?.panel else { return }
+                self?.positionOnActiveScreen(panel)
+            }
+        }
+    }
+
+    private func makePanel() -> NSPanel {
+        let panel = NSPanel(
+            contentRect: NSRect(origin: .zero, size: NSSize(width: Self.panelWidth, height: Self.panelHeight)),
+            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .floating
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false // SwiftUI Capsule provides its own shadow
+        panel.titlebarAppearsTransparent = true
+        panel.titleVisibility = .hidden
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = false
+        panel.delegate = self
+
+        // Let mouse events outside the pill pass through to whatever's behind.
+        // The pill's own Capsule background catches clicks for buttons.
+        let host = NSHostingView(
+            rootView: PanelRootView(
+                appState: appState,
+                recorder: recorder,
+                transcriber: transcriber
+            )
+        )
+        host.wantsLayer = true
+        host.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = host
+
+        return panel
+    }
+
+    private func positionOnActiveScreen(_ panel: NSPanel) {
+        guard let screen = NSScreen.main ?? panel.screen ?? NSScreen.screens.first else { return }
+        let visible = screen.visibleFrame
+        let size = panel.frame.size
+        // Bottom-center: horizontally centered, anchored above the dock area.
+        let origin = NSPoint(
+            x: visible.midX - size.width / 2,
+            y: visible.minY + Self.bottomInset
+        )
+        panel.setFrameOrigin(origin)
+    }
+}
+
+extension PanelWindowController: NSWindowDelegate {
+    // No-op — we never close the pill. Resize / move handled by SwiftUI.
+}

@@ -9,6 +9,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    working-directory: macos
+
 jobs:
   lint:
     name: Lint
@@ -39,8 +43,8 @@ jobs:
       - name: Cache DerivedData
         uses: actions/cache@v4
         with:
-          path: build/DerivedData
-          key: ${{ runner.os }}-deriveddata-${{ hashFiles('project.yml', 'Hark/**/*.swift') }}
+          path: macos/build/DerivedData
+          key: ${{ runner.os }}-deriveddata-${{ hashFiles('macos/project.yml', 'macos/Hark/**/*.swift') }}
           restore-keys: |
             ${{ runner.os }}-deriveddata-
       - name: Build (Debug)
@@ -92,5 +96,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: build/TestResults.xcresult
+          path: macos/build/TestResults.xcresult
           retention-days: 7

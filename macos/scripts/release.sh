@@ -73,7 +73,7 @@ echo "==> [5/5] Uploading to Cloudflare R2"
 # (still useful to be able to cut a notarized .app + .dmg without publishing).
 R2_PROFILE="${R2_PROFILE:-r2}"
 R2_BUCKET_NAME="${R2_BUCKET:-hark-releases}"
-R2_PUBLIC_BASE_URL="${R2_PUBLIC_BASE:-https://tellhark.com}"
+R2_PUBLIC_BASE_URL="${R2_PUBLIC_BASE:-https://dl.tellhark.com}"
 
 if [ -z "${R2_ACCOUNT_ID:-}" ]; then
     echo "    R2_ACCOUNT_ID not set — skipping upload."

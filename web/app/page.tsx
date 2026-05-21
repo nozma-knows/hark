@@ -1,6 +1,6 @@
 import Image from "next/image";
 
-const DOWNLOAD_URL = "https://tellhark.com/latest.dmg";
+const DOWNLOAD_URL = "https://dl.tellhark.com/latest.dmg";
 const GITHUB_URL = "https://github.com/nozma-knows/hark";
 const VERSION = "v0.1.0";
 

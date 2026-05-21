@@ -37,5 +37,16 @@
          The user still grants Automation access per-target-app via TCC. -->
     <key>com.apple.security.automation.apple-events</key>
     <true/>
+
+    <!-- Microphone access for AVAudioEngine dictation capture.
+
+         Under Hardened Runtime, even non-sandboxed apps need this resource-
+         access entitlement to reach the mic — without it,
+         AVCaptureDevice.requestAccess(for:.audio) immediately returns false
+         and the app never appears in System Settings → Privacy →
+         Microphone, leaving users with no way to grant access. NSMicrophone-
+         UsageDescription in Info.plist is also required (it is). -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
 </dict>
 </plist>

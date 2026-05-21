@@ -47,3 +47,10 @@ fi
 SIZE_BYTES=$(stat -f%z "${OUT_BIN}" 2>/dev/null || stat -c%s "${OUT_BIN}")
 SIZE_MB=$(( SIZE_BYTES / 1024 / 1024 ))
 echo "✅ Sidecar built — ${SIZE_MB} MB, ping round-trip OK"
+
+# Release builds: sign the sidecar with Developer ID + hardened runtime
+# BEFORE Xcode seals the outer .app's signature. Debug builds keep ad-hoc
+# / "Hark Dev" signing inherited from Xcode's standard pass.
+if [ "${CONFIGURATION:-Debug}" = "Release" ]; then
+    "${ROOT}/scripts/sign-sidecar.sh" "${OUT_BIN}"
+fi

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Hark is non-sandboxed (see project_distribution_constraint.md): it
+      spawns the user's locally-installed `claude` CLI and runs arbitrary
+      Bash via the Agent SDK in executeCommand.ts — both impossible under
+      App Sandbox.
+
+      What's left to negotiate with Apple is the Hardened Runtime, which IS
+      required for notarization. Each exception below is the minimum needed
+      for our specific stack.
+    -->
+
+    <!-- Bun (inside the sidecar) and CoreML (WhisperKit) use JIT compilation. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- WhisperKit + Bun need writable+executable memory pages. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- The bundled hark-sidecar binary embeds a JS runtime that loads code
+         outside Apple's library validation policy. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- ClaudeAuth + the sidecar pass HARK_CLAUDE_BINARY (and similar env
+         vars) so the SDK can locate the user's local Claude CLI. -->
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+
+    <!-- AppleScript / AppleEvents → other apps. Used by:
+         - ClaudeAuth.runSetupToken() to drive Terminal.app for setup-token
+         - executeCommand voice flow when Claude reaches for `osascript`
+         The user still grants Automation access per-target-app via TCC. -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

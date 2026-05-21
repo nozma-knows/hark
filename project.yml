@@ -106,17 +106,28 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: co.milbo.hark
         PRODUCT_NAME: Hark
         GENERATE_INFOPLIST_FILE: NO
-        ENABLE_HARDENED_RUNTIME: NO
         CODE_SIGN_STYLE: Manual
-        # "Hark Dev" is a self-signed cert created by scripts/setup-dev-signing.sh.
-        # Stable across rebuilds so macOS TCC (Accessibility, Microphone, …)
-        # remembers grants. CI overrides to ad-hoc via xcodebuild args.
-        CODE_SIGN_IDENTITY: "Hark Dev"
-        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_ENTITLEMENTS: Signing/Hark.entitlements
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_PREVIEWS: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        Debug:
+          # "Hark Dev" self-signed cert (scripts/setup-dev-signing.sh). Stable
+          # across rebuilds so macOS TCC remembers Accessibility / Microphone
+          # grants. CI overrides to ad-hoc via xcodebuild args.
+          ENABLE_HARDENED_RUNTIME: NO
+          CODE_SIGN_IDENTITY: "Hark Dev"
+          DEVELOPMENT_TEAM: ""
+        Release:
+          # Public-distribution signing: notarizable Developer ID + hardened
+          # runtime. The Developer ID Application cert is installed in the
+          # login keychain (see reference_apple_developer.md).
+          ENABLE_HARDENED_RUNTIME: YES
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          DEVELOPMENT_TEAM: HFBJTWK7B8
+          OTHER_CODE_SIGN_FLAGS: "--timestamp"
 
   HarkTests:
     type: bundle.unit-test

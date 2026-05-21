@@ -1,38 +1,43 @@
 # Hark
 
-> Voice → Linear tickets → Claude Code.
+> Voice control for macOS. Hold Fn, speak, release.
 
-Hark is a macOS menu bar app: hold a hotkey, speak, release. Your voice is transcribed
-on-device by [WhisperKit](https://github.com/argmaxinc/WhisperKit), turned into a
-structured Linear ticket draft by the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview),
-refined in a floating panel via chat, and either filed directly or handed to Claude Code
-to start working on.
+Hark is a macOS app that turns your voice into text, paste, or commands — anywhere on your Mac.
 
-The app is single-purpose and out of the way: menu bar status item, summoned panel,
-ESC to dismiss. Native SwiftUI, non-sandboxed, Developer ID signed and notarized.
+- **Hold `Fn`** — push-to-talk dictation. Transcript appears in a pill at the bottom of the screen.
+- **Hold `⌃ + Fn`** — polishes the transcript and pastes it wherever your cursor is.
+- **Hold `⇧ + Fn`** — voice command. *"Open Linear in my work profile."* *"Take a screenshot."*
 
-## Status
+Transcription runs on-device via [WhisperKit](https://github.com/argmaxinc/WhisperKit) on the Apple Neural Engine. Claude (via the [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview)) polishes the raw output and drives voice commands. Hark is bring-your-own-Claude — no bundled credentials.
 
-Pre-alpha. v1 lands across 15 milestone PRs; walking skeleton at PR 6, first useful
-Linear-creating version at PR 10, public-ready v1 at PR 15.
+**Download:** [tellhark.com/latest.dmg](https://tellhark.com/latest.dmg) (signed + notarized · Apple Silicon · macOS 14+)
+**Site:** [tellhark.com](https://tellhark.com)
 
-## Requirements
+## Repo layout
 
-- macOS 14.0 (Sonoma) or later, Apple Silicon
-- Xcode 16+
-- [Homebrew](https://brew.sh) for dev tooling
+```
+hark/
+├── macos/    Swift app + Bun sidecar — the actual product
+├── web/      Next.js landing site (tellhark.com)
+├── video/    Remotion compositions for the promo / hero video
+├── assets/   Brand artwork (logo source, etc.)
+├── README.md
+└── LICENSE
+```
 
-## Bootstrapping the project
+Each package is self-contained; CI and tooling assume `cd <pkg>` first.
 
-The Xcode project is generated from [`project.yml`](./project.yml) via
-[XcodeGen](https://github.com/yonaskolb/XcodeGen) — `.xcodeproj/` is gitignored.
+## macOS app — develop & build
+
+The Xcode project is generated from [`macos/project.yml`](./macos/project.yml) via [XcodeGen](https://github.com/yonaskolb/XcodeGen); `*.xcodeproj` is gitignored.
 
 ```sh
 # One-time tooling
-brew install xcodegen swiftlint swiftformat openssl@3
+brew install xcodegen swiftlint swiftformat openssl@3 bun
 
 # Set up stable dev signing — keeps macOS TCC (Accessibility, Microphone)
 # grants across rebuilds. Creates a self-signed cert in your login keychain.
+cd macos
 ./scripts/setup-dev-signing.sh
 
 # Install git hooks (lint + format on commit)
@@ -45,49 +50,52 @@ xcodegen generate
 open Hark.xcodeproj
 ```
 
-> **Why the dev signing step?** Hark needs Accessibility and Microphone
-> permissions. Without a stable code-signing identity, macOS TCC ties trust
-> to each rebuild's `cdhash` — you'd re-grant on every change. The script
-> creates a `Hark Dev` self-signed cert; `project.yml` is pinned to that
-> identity. CI builds fall back to ad-hoc via xcodebuild overrides.
-
-Or build from the CLI:
+Or build from the CLI (from inside `macos/`):
 
 ```sh
 xcodebuild -project Hark.xcodeproj -scheme Hark \
-           -destination 'platform=macOS' -configuration Debug build
+  -destination 'platform=macOS' -configuration Debug build
 ```
 
-Run the tests:
+### Cutting a signed + notarized release
+
+Requires Apple Developer Program enrollment and the `Developer ID Application` cert installed locally, plus an App Store Connect API key stored as the `hark-notary-api` notarytool keychain profile. See `docs/distribution.md` if you need the full setup walk-through.
 
 ```sh
-xcodebuild -project Hark.xcodeproj -scheme Hark \
-           -destination 'platform=macOS' -configuration Debug test
+cd macos
+./scripts/release.sh 0.1.1   # archive → sign → notarize → staple → dmg → upload
 ```
 
-## Project layout
+If `R2_ACCOUNT_ID` is set + `aws --profile r2` is configured, the script also uploads to Cloudflare R2 so the new build appears at `tellhark.com/Hark-0.1.1.dmg` and `tellhark.com/latest.dmg`.
 
-```
-Hark/
-├── Hark/           # Swift app sources (App, Audio, Transcription, Hotkey, …)
-├── Sidecar/        # Bun + Claude Agent SDK bridge (added in PR 7)
-├── Tests/          # XCTest targets
-├── scripts/        # install-hooks.sh, build-sidecar.sh, release.sh
-├── .githooks/      # pre-commit (swiftformat + swiftlint on staged files)
-├── project.yml     # XcodeGen — source of truth for the Xcode project
-├── .swiftlint.yml  # lint rules (strict)
-└── .swiftformat    # formatting rules (matched to swiftlint)
+## Landing site
+
+```sh
+cd web
+pnpm install
+pnpm dev          # http://localhost:3000
+pnpm build        # production build
 ```
 
-## Auth
+Deployed on Vercel from `/web` (Root Directory setting in the Vercel project). Next.js 16, App Router, Tailwind 4.
 
-Hark never bundles Claude credentials. On first run it detects what's available on
-your machine and falls back to a guided "bring your own auth" flow:
+## Promo video
 
-1. An existing `claude` CLI session (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`), or
-2. An `ANTHROPIC_API_KEY` you supply (stored only in your Keychain).
+```sh
+cd video
+pnpm install
+pnpm dev               # opens Remotion Studio for live preview
+pnpm build:promo       # render out/hark-promo.mp4
+```
 
-Linear API tokens are also Keychain-only.
+Remotion 4 + React 19. The current `Promo` composition is a placeholder hero loop; replace with real demo footage when ready.
+
+## Auth (macOS app)
+
+Hark never bundles or transmits Claude credentials. On first launch the Settings tab detects what's already on your machine and falls back to a guided BYO flow:
+
+1. An existing `claude` CLI session (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`), **or**
+2. An `ANTHROPIC_API_KEY` you supply (stored in your Keychain).
 
 ## License
 

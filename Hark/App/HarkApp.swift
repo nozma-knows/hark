@@ -8,7 +8,9 @@ struct HarkApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            HarkMenu(appState: delegate.appState)
+            HarkMenu(appState: delegate.appState) {
+                delegate.requestPanelToggle()
+            }
         } label: {
             Image(systemName: "waveform")
                 .accessibilityLabel("Hark")
@@ -23,13 +25,14 @@ struct HarkApp: App {
 
 private struct HarkMenu: View {
     @Bindable var appState: AppState
+    let onTogglePanel: () -> Void
 
     @Environment(\.openSettings)
     private var openSettings
 
     var body: some View {
         Button(appState.isPanelVisible ? "Hide Hark" : "Show Hark") {
-            appState.isPanelVisible.toggle()
+            onTogglePanel()
         }
         .keyboardShortcut(.space, modifiers: [.control, .option])
 

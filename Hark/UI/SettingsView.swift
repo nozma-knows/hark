@@ -277,7 +277,7 @@ private struct ModelRow: View {
 
     private var isBusy: Bool {
         switch transcriber.state {
-        case let .downloading(m, _), let .loading(m), let .recording(m):
+        case let .downloading(m, _), let .loading(m), let .transcribing(m):
             m == model
         default:
             false

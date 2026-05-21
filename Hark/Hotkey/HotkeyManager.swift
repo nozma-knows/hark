@@ -138,16 +138,16 @@ final class HotkeyManager {
     }
 
     private func update(isFnEvent: Bool, fnDown: Bool, ctrlDown: Bool, shiftDown: Bool) {
-        // Live-update trigger while Fn is held (hold mode only — toggle mode
-        // locks in at the first tap so the user doesn't have to keep keys
-        // pressed during the whole recording).
+        // Latch-upgrade: while Fn is held, the trigger can only escalate
+        // (.dictate → .insert → .command), never downgrade. Users routinely
+        // release Shift / Ctrl a moment before they release Fn — without
+        // latching that brief gap would silently demote the gesture.
         if isHeld, mode == .hold {
-            let newTrigger = Self.resolveTrigger(ctrlDown: ctrlDown, shiftDown: shiftDown)
-            if newTrigger != currentTrigger {
-                Self.logger.debug(
-                    "Trigger live update: \(String(describing: newTrigger), privacy: .public)"
-                )
-                currentTrigger = newTrigger
+            let observed = Self.resolveTrigger(ctrlDown: ctrlDown, shiftDown: shiftDown)
+            if Self.priority(observed) > Self.priority(currentTrigger) {
+                let desc = String(describing: observed)
+                Self.logger.info("Trigger upgrade: \(desc, privacy: .public) (ctrl=\(ctrlDown), shift=\(shiftDown))")
+                currentTrigger = observed
             }
         }
 
@@ -158,12 +158,12 @@ final class HotkeyManager {
             isHeld = true
             currentTrigger = Self.resolveTrigger(ctrlDown: ctrlDown, shiftDown: shiftDown)
             let triggerDesc = String(describing: currentTrigger)
-            Self.logger.debug("Fn down (trigger: \(triggerDesc, privacy: .public))")
+            Self.logger.info("Fn down → \(triggerDesc, privacy: .public) (ctrl=\(ctrlDown), shift=\(shiftDown))")
             onKeyDown?(currentTrigger)
         } else if !fnDown, isHeld {
             isHeld = false
             let triggerDesc = String(describing: currentTrigger)
-            Self.logger.debug("Fn up (trigger: \(triggerDesc, privacy: .public))")
+            Self.logger.info("Fn up → \(triggerDesc, privacy: .public) (ctrl=\(ctrlDown), shift=\(shiftDown))")
             onKeyUp?(currentTrigger)
         }
     }
@@ -175,5 +175,15 @@ final class HotkeyManager {
         if shiftDown { return .command }
         if ctrlDown { return .insert }
         return .dictate
+    }
+
+    /// Power ranking of triggers — used by the latch-upgrade rule so the
+    /// gesture can only escalate (dictate → insert → command), never demote.
+    private static func priority(_ trigger: HotkeyTrigger) -> Int {
+        switch trigger {
+        case .dictate: 0
+        case .insert: 1
+        case .command: 2
+        }
     }
 }

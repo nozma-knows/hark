@@ -5,6 +5,11 @@ packages:
   KeyboardShortcuts:
     url: https://github.com/sindresorhus/KeyboardShortcuts
     exactVersion: "2.3.0"
+  # On-device transcription via Apple Neural Engine — CoreML models downloaded
+  # at runtime into ~/Library/Application Support/Hark/Models/.
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    from: "1.0.0"
 
 options:
   bundleIdPrefix: co.milbo
@@ -51,6 +56,7 @@ targets:
           - Generated
     dependencies:
       - package: KeyboardShortcuts
+      - package: WhisperKit
     info:
       path: Hark/Generated/Info.plist
       properties:

@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let permissions: PermissionsManager
     let hotkey: HotkeyManager
     let recorder: AudioRecorder
+    let transcriber: Transcriber
     let panelController: PanelWindowController
     let onboardingController: OnboardingWindowController
 
@@ -17,11 +18,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let perms = PermissionsManager()
         let hotkeyManager = HotkeyManager()
         let audioRecorder = AudioRecorder()
+        let transcriberInstance = Transcriber()
         appState = state
         permissions = perms
         hotkey = hotkeyManager
         recorder = audioRecorder
-        panelController = PanelWindowController(appState: state, recorder: audioRecorder)
+        transcriber = transcriberInstance
+        panelController = PanelWindowController(
+            appState: state,
+            recorder: audioRecorder,
+            transcriber: transcriberInstance
+        )
         onboardingController = OnboardingWindowController(permissions: perms)
         super.init()
 
@@ -45,6 +52,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         onboardingController.showIfNeeded()
+
+        // Warm the previously selected model in the background so the first
+        // dictation doesn't pay the load cost. If the model isn't downloaded
+        // yet, this kicks off the download in parallel.
+        transcriber.bootstrap()
     }
 
     /// Menu-driven panel toggle. Doesn't start/stop recording — the menu's job
@@ -77,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startRecording() {
+        appState.transcript = nil
         do {
             try recorder.start()
             appState.isPanelVisible = true
@@ -86,10 +99,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func stopRecording() {
-        _ = recorder.stop()
-        // PR 6 wires these samples into WhisperKit. For PR 5 the samples
-        // are intentionally discarded — the goal is to validate that the
-        // capture → UI loop feels right.
+        let samples = recorder.stop()
+        guard !samples.isEmpty else { return }
+        Task { [weak self] in
+            await self?.transcribeAndShow(samples)
+        }
+    }
+
+    private func transcribeAndShow(_ samples: [Float]) async {
+        do {
+            let text = try await transcriber.transcribe(samples: samples)
+            appState.transcript = text.isEmpty ? nil : text
+        } catch {
+            Self.logger.error("Transcribe failed: \(String(describing: error), privacy: .public)")
+        }
     }
 
     /// Common precondition for any action that needs mic + accessibility.

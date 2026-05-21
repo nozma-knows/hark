@@ -12,4 +12,9 @@ final class AppState {
     /// supported way to show or hide the panel — `PanelWindowController`
     /// observes the value and drives the underlying `NSPanel`.
     var isPanelVisible: Bool = false
+
+    /// The most recent transcription, if any. Cleared when a new recording
+    /// starts. The panel renders the transcript when this is non-nil and the
+    /// recorder/transcriber are idle.
+    var transcript: String?
 }

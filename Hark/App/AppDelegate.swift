@@ -229,7 +229,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         } catch {
-            Self.logger.error("executeCommand failed: \(String(describing: error), privacy: .public)")
+            let detail = String(describing: error)
+            Self.logger.error("executeCommand failed: \(detail, privacy: .public)")
             appState.commandResult = .init(
                 summary: "Command failed: \(error.localizedDescription)",
                 succeeded: false

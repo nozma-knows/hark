@@ -16,7 +16,7 @@ final class AgentSidecar {
     private static let logger = Logger(subsystem: "co.milbo.hark", category: "AgentSidecar")
     private static let binaryName = "hark-sidecar"
 
-    enum SidecarError: Error, CustomStringConvertible {
+    enum SidecarError: LocalizedError, CustomStringConvertible {
         case binaryNotFound
         case notRunning
         case server(message: String, code: String?)
@@ -31,6 +31,10 @@ final class AgentSidecar {
             case .malformedResponse: "Sidecar sent a malformed response"
             }
         }
+
+        /// LocalizedError surfaces description via error.localizedDescription
+        /// so the pill shows the real reason instead of "error 0".
+        var errorDescription: String? { description }
     }
 
     private var process: Process?

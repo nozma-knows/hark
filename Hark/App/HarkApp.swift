@@ -8,11 +8,12 @@ struct HarkApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            HarkMenu(appState: delegate.appState) {
-                delegate.requestPanelToggle()
-            } onShowWelcome: {
-                delegate.onboardingController.show()
-            }
+            HarkMenu(
+                hotkey: delegate.hotkey,
+                recorder: delegate.recorder,
+                transcriber: delegate.transcriber,
+                onShowWelcome: { delegate.onboardingController.show() }
+            )
         } label: {
             Image(systemName: "waveform")
                 .accessibilityLabel("Hark")
@@ -30,29 +31,28 @@ struct HarkApp: App {
 }
 
 private struct HarkMenu: View {
-    @Bindable var appState: AppState
-    let onTogglePanel: () -> Void
+    @Bindable var hotkey: HotkeyManager
+    @Bindable var recorder: AudioRecorder
+    @Bindable var transcriber: Transcriber
     let onShowWelcome: () -> Void
 
     @Environment(\.openSettings)
     private var openSettings
 
     var body: some View {
-        Button(appState.isPanelVisible ? "Hide Hark" : "Show Hark") {
-            onTogglePanel()
-        }
-        .keyboardShortcut(.space, modifiers: [.control, .option])
+        Text(statusLine)
+            .font(.caption)
 
         Divider()
+
+        Button("Welcome…") {
+            onShowWelcome()
+        }
 
         Button("Settings…") {
             openSettings()
         }
         .keyboardShortcut(",", modifiers: [.command])
-
-        Button("Welcome…") {
-            onShowWelcome()
-        }
 
         Button("About Hark") {
             NSApp.orderFrontStandardAboutPanel(nil)
@@ -65,5 +65,16 @@ private struct HarkMenu: View {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q", modifiers: [.command])
+    }
+
+    private var statusLine: String {
+        let state = if recorder.state == .recording {
+            "Recording"
+        } else if case .transcribing = transcriber.state {
+            "Transcribing"
+        } else {
+            "Hark"
+        }
+        return "\(state) · \(hotkey.label) · \(hotkey.mode.label)"
     }
 }

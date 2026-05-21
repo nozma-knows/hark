@@ -2,78 +2,54 @@ import AppKit
 import Observation
 import SwiftUI
 
-/// Owns the floating, borderless, non-activating `NSPanel` that hosts Hark's
-/// transient UI. The panel lives outside SwiftUI's scene graph so it can:
-/// (a) appear without taking focus from the user's current app,
-/// (b) float above all standard windows on every Space,
-/// (c) be summoned/dismissed declaratively by toggling `AppState.isPanelVisible`.
-///
-/// Because the panel is non-activating it never receives key events through
-/// the responder chain — ESC dismissal is wired via a global `NSEvent`
-/// monitor active only while the panel is visible.
+/// Owns the always-visible Wispr Flow-style pill panel at the bottom-center
+/// of the active screen. The panel:
+/// - is borderless + non-activating (clicks pass through outside the pill)
+/// - floats above all standard windows on every Space
+/// - doesn't take focus from the user's current app
+/// - resizes its frame as the SwiftUI content grows / shrinks between
+///   idle / recording / processing / transcript states
 @MainActor
 final class PanelWindowController: NSObject {
-    private static let defaultSize = NSSize(width: 560, height: 320)
-    private static let cornerRadius: CGFloat = 14
-    private static let escKeyCode: UInt16 = 53
+    private static let panelHeight: CGFloat = 72
+    private static let panelWidth: CGFloat = 600
+    private static let bottomInset: CGFloat = 0
 
     private let appState: AppState
     private let recorder: AudioRecorder
     private let transcriber: Transcriber
     private var panel: NSPanel?
-    private var globalEscMonitor: Any?
-    private var localEscMonitor: Any?
 
     init(appState: AppState, recorder: AudioRecorder, transcriber: Transcriber) {
         self.appState = appState
         self.recorder = recorder
         self.transcriber = transcriber
         super.init()
-        observeVisibility()
     }
 
-    // No deinit cleanup — this controller is owned by AppDelegate and lives
-    // for the whole process lifetime; monitors are torn down each time the
-    // panel hides via stopEscMonitor(), and the OS reclaims the rest on exit.
-
-    private func observeVisibility() {
-        // `withObservationTracking` fires once per change; re-register inside
-        // `onChange` to keep listening for subsequent toggles.
-        withObservationTracking {
-            _ = appState.isPanelVisible
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                syncPanelVisibility()
-                observeVisibility()
+    /// Show the pill on app launch. Always visible from this point on; the
+    /// content reflects the active state via SwiftUI bindings.
+    func showAlways() {
+        let panel = panel ?? makePanel()
+        self.panel = panel
+        positionOnActiveScreen(panel)
+        panel.orderFrontRegardless()
+        // Reposition on screen changes (display arrangement, resolution).
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let panel = self?.panel else { return }
+                self?.positionOnActiveScreen(panel)
             }
         }
     }
 
-    private func syncPanelVisibility() {
-        if appState.isPanelVisible {
-            present()
-        } else {
-            dismiss()
-        }
-    }
-
-    private func present() {
-        let panel = panel ?? makePanel()
-        self.panel = panel
-        positionOnActiveScreen(panel)
-        panel.makeKeyAndOrderFront(nil)
-        startEscMonitor()
-    }
-
-    private func dismiss() {
-        stopEscMonitor()
-        panel?.orderOut(nil)
-    }
-
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: Self.defaultSize),
+            contentRect: NSRect(origin: .zero, size: NSSize(width: Self.panelWidth, height: Self.panelHeight)),
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -82,18 +58,19 @@ final class PanelWindowController: NSObject {
         panel.level = .floating
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false // SwiftUI Capsule provides its own shadow
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
         panel.standardWindowButton(.closeButton)?.isHidden = true
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
-        panel.animationBehavior = .utilityWindow
+        panel.ignoresMouseEvents = false
         panel.delegate = self
 
+        // Let mouse events outside the pill pass through to whatever's behind.
+        // The pill's own Capsule background catches clicks for buttons.
         let host = NSHostingView(
             rootView: PanelRootView(
                 appState: appState,
@@ -102,9 +79,9 @@ final class PanelWindowController: NSObject {
             )
         )
         host.wantsLayer = true
-        host.layer?.cornerRadius = Self.cornerRadius
-        host.layer?.masksToBounds = true
+        host.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = host
+
         return panel
     }
 
@@ -112,64 +89,15 @@ final class PanelWindowController: NSObject {
         guard let screen = NSScreen.main ?? panel.screen ?? NSScreen.screens.first else { return }
         let visible = screen.visibleFrame
         let size = panel.frame.size
-        // Centered horizontally; positioned ~25% from the top edge of the visible area.
+        // Bottom-center: horizontally centered, anchored above the dock area.
         let origin = NSPoint(
             x: visible.midX - size.width / 2,
-            y: visible.maxY - size.height - visible.height * 0.25
+            y: visible.minY + Self.bottomInset
         )
         panel.setFrameOrigin(origin)
-    }
-
-    // MARK: - ESC dismissal
-
-    /// Start watching for ESC keystrokes. We need both monitors because the
-    /// non-activating panel doesn't take key focus from the frontmost app:
-    /// global covers ESC presses while another app is focused, local covers
-    /// the edge case where Hark itself is focused (e.g. Settings open).
-    private func startEscMonitor() {
-        stopEscMonitor()
-        globalEscMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == Self.escKeyCode else { return }
-            Task { @MainActor [weak self] in
-                self?.handleEscape()
-            }
-        }
-        localEscMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == Self.escKeyCode else { return event }
-            Task { @MainActor [weak self] in
-                self?.handleEscape()
-            }
-            return nil
-        }
-    }
-
-    private func stopEscMonitor() {
-        if let monitor = globalEscMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalEscMonitor = nil
-        }
-        if let monitor = localEscMonitor {
-            NSEvent.removeMonitor(monitor)
-            localEscMonitor = nil
-        }
-    }
-
-    private func handleEscape() {
-        // Don't dismiss mid-recording — the hotkey-release path is the right
-        // way to stop a hold-to-talk session, and we'd lose the audio.
-        if recorder.state == .recording { return }
-        appState.transcript = nil
-        appState.isPanelVisible = false
     }
 }
 
 extension PanelWindowController: NSWindowDelegate {
-    /// Mirror external closes (e.g., system-initiated) back into `AppState`
-    /// so the menu label and any future bindings stay correct.
-    func windowWillClose(_: Notification) {
-        stopEscMonitor()
-        if appState.isPanelVisible {
-            appState.isPanelVisible = false
-        }
-    }
+    // No-op — we never close the pill. Resize / move handled by SwiftUI.
 }

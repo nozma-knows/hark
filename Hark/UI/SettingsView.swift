@@ -1,5 +1,4 @@
 import AppKit
-import KeyboardShortcuts
 import SwiftUI
 
 struct SettingsView: View {
@@ -42,9 +41,20 @@ private struct HotkeyPane: View {
     var body: some View {
         Form {
             Section {
-                KeyboardShortcuts.Recorder("Global shortcut:", name: .summonPanel)
+                HStack {
+                    Text("Global hotkey")
+                    Spacer()
+                    Text(hotkey.label)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule().fill(.tint.opacity(0.15))
+                        )
+                        .foregroundStyle(.tint)
+                }
             } footer: {
-                Text("Requires Accessibility permission. Default is ⌃⌥ Space.")
+                Text("Uses the Fn (🌐) key. If Fn opens emoji or dictation, set Keyboard → 🌐 to \"Do Nothing\".")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

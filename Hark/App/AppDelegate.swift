@@ -85,12 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             forName: .openHarkSettings,
             object: nil,
             queue: .main
-        ) { _ in
-            MainActor.assumeIsolated {
-                NSApp.activate(ignoringOtherApps: true)
-                let selector = NSSelectorFromString("showSettingsWindow:")
-                NSApp.sendAction(selector, to: nil, from: nil)
-            }
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.openSettingsWindow() }
         }
 
         onboardingController.showIfNeeded()
@@ -218,6 +214,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             Self.logger.error("Polish failed (using raw): \(String(describing: error), privacy: .public)")
             return raw
+        }
+    }
+
+    /// Open the SwiftUI Settings window. Tries multiple paths because
+    /// `NSApp.sendAction(showSettingsWindow:)` doesn't always reach SwiftUI's
+    /// Settings scene from a fresh process: first focus an existing Settings
+    /// window if one's around; otherwise post the selector after activating
+    /// the app with a small delay so SwiftUI's responder chain is settled.
+    private func openSettingsWindow() {
+        Self.logger.info("openSettingsWindow invoked")
+        NSApp.activate(ignoringOtherApps: true)
+
+        // Path A: re-focus an already-open Settings window.
+        let existing = NSApp.windows.first(where: { window in
+            let id = window.identifier?.rawValue.lowercased() ?? ""
+            let title = window.title.lowercased()
+            let isSettings = id.contains("settings") || title == "settings"
+                || id.contains("preferences") || title == "preferences"
+            return isSettings && window.isVisible == false || isSettings
+        })
+        if let existing {
+            Self.logger.info("Re-focusing existing Settings window: \(existing.title, privacy: .public)")
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        // Path B: ask SwiftUI to open the Settings scene. Dispatch after the
+        // current run-loop tick so .activate has time to settle.
+        DispatchQueue.main.async {
+            let selector = NSSelectorFromString("showSettingsWindow:")
+            let responds = NSApp.responds(to: selector)
+            Self.logger.info("NSApp responds(showSettingsWindow:): \(responds)")
+            NSApp.sendAction(selector, to: nil, from: nil)
         }
     }
 

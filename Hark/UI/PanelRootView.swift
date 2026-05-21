@@ -1,4 +1,7 @@
+import OSLog
 import SwiftUI
+
+private let panelLogger = Logger(subsystem: "co.milbo.hark", category: "Panel")
 
 /// Wispr Flow-style pill UI at the bottom-center of the screen.
 /// - Idle: tiny capsule outline, barely visible (~80×4)
@@ -111,15 +114,23 @@ private struct IdlePill: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 4)
-                    Button {
-                        NotificationCenter.default.post(name: .openHarkSettings, object: nil)
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
-                    .help("Settings")
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        // Bigger transparent hit target so clicking on the
+                        // gear glyph hits cleanly. SwiftUI Buttons inside a
+                        // non-activating NSPanel have been unreliable here;
+                        // a tap gesture on a sized hit shape works.
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                        .help("Settings")
+                        .onTapGesture {
+                            panelLogger.info("Gear tapped — posting openHarkSettings")
+                            NotificationCenter.default.post(
+                                name: .openHarkSettings,
+                                object: nil
+                            )
+                        }
                 }
                 .padding(.horizontal, 14)
                 .opacity(isHovered ? 1 : 0)

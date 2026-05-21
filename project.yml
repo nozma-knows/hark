@@ -1,5 +1,11 @@
 name: Hark
 
+packages:
+  # 2.4.0 requires swift-tools 6.1 (Xcode 16.3+); pinned to 2.3.x for Xcode 16.2.
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    exactVersion: "2.3.0"
+
 options:
   bundleIdPrefix: co.milbo
   deploymentTarget:
@@ -43,6 +49,8 @@ targets:
       - path: Hark
         excludes:
           - Generated
+    dependencies:
+      - package: KeyboardShortcuts
     info:
       path: Hark/Generated/Info.plist
       properties:

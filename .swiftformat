@@ -47,6 +47,9 @@
 # Exclusions
 --exclude Hark/Generated,Hark.xcodeproj,build,DerivedData,.build,Sidecar/node_modules,Sidecar/dist
 
+# Disable rules that fight clean SwiftUI / Observable patterns
+--disable wrapPropertyBodies  # `var id: Self { self }` is cleaner one-line
+
 # Enable extras
 --enable blankLinesBetweenScopes
 --enable redundantBackticks

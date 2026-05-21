@@ -114,23 +114,21 @@ private struct IdlePill: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 4)
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        // Bigger transparent hit target so clicking on the
-                        // gear glyph hits cleanly. SwiftUI Buttons inside a
-                        // non-activating NSPanel have been unreliable here;
-                        // a tap gesture on a sized hit shape works.
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
-                        .help("Settings")
-                        .onTapGesture {
-                            panelLogger.info("Gear tapped — posting openHarkSettings")
-                            NotificationCenter.default.post(
-                                name: .openHarkSettings,
-                                object: nil
-                            )
-                        }
+                    // SwiftUI's runtime explicitly requires `SettingsLink`
+                    // for opening the Settings scene on macOS 14+. Action
+                    // selectors (`showSettingsWindow:` / `showPreferencesWindow:`)
+                    // were removed; NSApp.sendAction returns false. The
+                    // SettingsLink view routes the click through SwiftUI's
+                    // internal Scene plumbing — works even from an NSHostingView.
+                    SettingsLink {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Settings")
                 }
                 .padding(.horizontal, 14)
                 .opacity(isHovered ? 1 : 0)

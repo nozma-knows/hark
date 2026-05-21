@@ -12,7 +12,7 @@ import SwiftUI
 @MainActor
 final class PanelWindowController: NSObject {
     private static let panelHeight: CGFloat = 72
-    private static let panelWidth: CGFloat = 600
+    private static let panelWidth: CGFloat = 680
     private static let bottomInset: CGFloat = 0
 
     private let appState: AppState

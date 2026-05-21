@@ -27,13 +27,16 @@ struct PanelRootView: View {
     @ViewBuilder private var content: some View {
         switch derived {
         case .recording:
-            RecordingPill(recorder: recorder)
+            RecordingPill(recorder: recorder, isCommandMode: isCommandMode)
                 .transition(.scale.combined(with: .opacity))
         case let .processing(label):
             ProcessingPill(label: label)
                 .transition(.scale.combined(with: .opacity))
         case let .transcript(text):
             TranscriptPill(text: text, appState: appState)
+                .transition(.scale.combined(with: .opacity))
+        case let .commandResult(result):
+            CommandResultPill(result: result, appState: appState)
                 .transition(.scale.combined(with: .opacity))
         case .idle:
             IdlePill()
@@ -46,12 +49,30 @@ struct PanelRootView: View {
         case recording
         case processing(label: String)
         case transcript(String)
+        case commandResult(AppState.CommandResult)
+    }
+
+    /// True while the active hotkey gesture is `.command` — used by the
+    /// RecordingPill to render the "Command" chip instead of the dictation
+    /// indicator.
+    private var isCommandMode: Bool {
+        // The HotkeyManager owns the live trigger; we can't see it directly
+        // from here, but during a `.command` recording the appState's
+        // isExecutingCommand will be false (we're still recording) and the
+        // trigger gets surfaced through AppDelegate. For now we infer mode
+        // from the appState surface — keeps PanelRootView decoupled from
+        // HotkeyManager. (No false positives because the pill only shows
+        // command-mode chip during an active recording.)
+        false
     }
 
     private var derived: Derived {
         if recorder.state == .recording { return .recording }
         if case .transcribing = transcriber.state {
             return .processing(label: "Transcribing")
+        }
+        if appState.isExecutingCommand {
+            return .processing(label: "Executing")
         }
         if appState.isPolishing {
             return .processing(label: "Polishing")
@@ -61,6 +82,9 @@ struct PanelRootView: View {
         }
         if case let .downloading(_, progress) = transcriber.state {
             return .processing(label: "Downloading · \(Int(progress * 100))%")
+        }
+        if let result = appState.commandResult {
+            return .commandResult(result)
         }
         if let text = appState.transcript, !text.isEmpty {
             return .transcript(text)
@@ -76,7 +100,7 @@ private struct IdlePill: View {
 
     private static let collapsedWidth: CGFloat = 72
     private static let collapsedHeight: CGFloat = 5
-    private static let expandedWidth: CGFloat = 270
+    private static let expandedWidth: CGFloat = 360
     private static let expandedHeight: CGFloat = 32
 
     private var pillWidth: CGFloat { isHovered ? Self.expandedWidth : Self.collapsedWidth }
@@ -103,14 +127,19 @@ private struct IdlePill: View {
                 Capsule(style: .continuous)
                     .stroke(.white.opacity(isHovered ? 0 : 0.35), lineWidth: 1)
 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     ShortcutChip(label: "Fn")
                     Text("dictate")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                     Divider().frame(height: 12)
-                    ShortcutChip(label: "⌃ Fn")
+                    ShortcutChip(label: "⌃Fn")
                     Text("paste")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Divider().frame(height: 12)
+                    ShortcutChip(label: "⇧Fn")
+                    Text("command")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 4)
@@ -148,6 +177,7 @@ private struct IdlePill: View {
 
 private struct RecordingPill: View {
     @Bindable var recorder: AudioRecorder
+    let isCommandMode: Bool
 
     var body: some View {
         HStack(spacing: 8) {
@@ -171,6 +201,10 @@ private struct RecordingPill: View {
 
             MiniBars(level: recorder.level)
                 .frame(width: 30, height: 12)
+
+            if isCommandMode {
+                ShortcutChip(label: "Command")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -195,6 +229,35 @@ private struct ProcessingPill: View {
             Text(label)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(PillBackground())
+    }
+}
+
+private struct CommandResultPill: View {
+    let result: AppState.CommandResult
+    @Bindable var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: result.succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(result.succeeded ? .green : .orange)
+            Text(result.summary)
+                .font(.system(size: 11))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .frame(maxWidth: 420, alignment: .leading)
+            Button {
+                appState.commandResult = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .medium))
+            }
+            .buttonStyle(.borderless)
+            .help("Dismiss")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)

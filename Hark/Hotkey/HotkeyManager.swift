@@ -5,15 +5,21 @@ import Observation
 import OSLog
 
 /// Which gesture the user initiated. The active trigger is updated live
-/// while Fn is held — if the user adds Ctrl mid-press, the trigger
-/// upgrades to `.insert`; if they release Ctrl while keeping Fn, it
-/// downgrades to `.dictate`. The value at the moment Fn is released is
-/// what AppDelegate uses.
+/// while Fn is held — adding or releasing modifiers updates the trigger
+/// in real time. The value at the moment Fn is released is what
+/// AppDelegate uses to route the transcript.
+///
+/// Modifier precedence at Fn-up time:
+///   Shift held   → `.command`  (voice command; transcript drives Bash)
+///   Control held → `.insert`   (paste polished transcript into focused input)
+///   neither      → `.dictate`  (show polished transcript in pill)
 enum HotkeyTrigger: Equatable {
-    /// Plain Fn — transcript goes into the pill UI.
+    /// Plain Fn — polished transcript goes into the pill UI.
     case dictate
-    /// Fn + Control — transcript gets pasted into the focused text input.
+    /// Fn + Control — polished transcript gets pasted into the focused text input.
     case insert
+    /// Fn + Shift — transcript becomes a voice command Claude executes via Bash.
+    case command
 }
 
 /// How the global modifier-only hotkey behaves. Persisted to UserDefaults.
@@ -95,12 +101,14 @@ final class HotkeyManager {
             let isFnEvent = keycode == HotkeyManager.fnKeycode
             let isFnDown = flags.contains(.maskSecondaryFn)
             let isCtrlDown = flags.contains(.maskControl)
+            let isShiftDown = flags.contains(.maskShift)
             let manager = Unmanaged<HotkeyManager>.fromOpaque(info).takeUnretainedValue()
             Task { @MainActor in
                 manager.update(
                     isFnEvent: isFnEvent,
                     fnDown: isFnDown,
-                    ctrlDown: isCtrlDown
+                    ctrlDown: isCtrlDown,
+                    shiftDown: isShiftDown
                 )
             }
             return Unmanaged.passUnretained(event)
@@ -129,12 +137,12 @@ final class HotkeyManager {
         Self.logger.info("Fn event tap installed")
     }
 
-    private func update(isFnEvent: Bool, fnDown: Bool, ctrlDown: Bool) {
+    private func update(isFnEvent: Bool, fnDown: Bool, ctrlDown: Bool, shiftDown: Bool) {
         // Live-update trigger while Fn is held (hold mode only — toggle mode
         // locks in at the first tap so the user doesn't have to keep keys
         // pressed during the whole recording).
         if isHeld, mode == .hold {
-            let newTrigger: HotkeyTrigger = ctrlDown ? .insert : .dictate
+            let newTrigger = Self.resolveTrigger(ctrlDown: ctrlDown, shiftDown: shiftDown)
             if newTrigger != currentTrigger {
                 Self.logger.debug(
                     "Trigger live update: \(String(describing: newTrigger), privacy: .public)"
@@ -148,7 +156,7 @@ final class HotkeyManager {
 
         if fnDown, !isHeld {
             isHeld = true
-            currentTrigger = ctrlDown ? .insert : .dictate
+            currentTrigger = Self.resolveTrigger(ctrlDown: ctrlDown, shiftDown: shiftDown)
             let triggerDesc = String(describing: currentTrigger)
             Self.logger.debug("Fn down (trigger: \(triggerDesc, privacy: .public))")
             onKeyDown?(currentTrigger)
@@ -158,5 +166,14 @@ final class HotkeyManager {
             Self.logger.debug("Fn up (trigger: \(triggerDesc, privacy: .public))")
             onKeyUp?(currentTrigger)
         }
+    }
+
+    /// Modifier-to-trigger map. Shift wins over Ctrl if both are held — the
+    /// reasoning is that ".command" is the more deliberate / rarer gesture,
+    /// so a user who's holding both probably meant to engage it.
+    private static func resolveTrigger(ctrlDown: Bool, shiftDown: Bool) -> HotkeyTrigger {
+        if shiftDown { return .command }
+        if ctrlDown { return .insert }
+        return .dictate
     }
 }

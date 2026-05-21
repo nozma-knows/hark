@@ -148,31 +148,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
 
-            // Polish via Claude before delivering. Falls back to raw on any
-            // failure (no auth, sidecar crash, network) so dictation always
-            // produces something.
-            appState.isPolishing = true
-            let text = await polishOrFallback(trimmed)
-            appState.isPolishing = false
-
             switch trigger {
-            case .dictate:
-                appState.transcript = text
-            case .insert:
-                let hasInput = InputInserter.hasFocusedTextInput()
-                Self.logger.info("Insert mode: hasFocusedInput=\(hasInput, privacy: .public)")
-                if hasInput {
-                    InputInserter.paste(text)
-                    // Don't surface a panel — the text landed where the
-                    // user was already typing.
+            case .command:
+                // Voice command: skip the polish step (Claude is going to
+                // interpret intent anyway) and send straight to executeCommand.
+                await executeVoiceCommand(trimmed)
+
+            case .dictate, .insert:
+                // Polish via Claude before delivering. Falls back to raw on
+                // any failure so dictation always produces something.
+                appState.isPolishing = true
+                let text = await polishOrFallback(trimmed)
+                appState.isPolishing = false
+
+                if trigger == .insert {
+                    let hasInput = InputInserter.hasFocusedTextInput()
+                    Self.logger.info("Insert mode: hasFocusedInput=\(hasInput, privacy: .public)")
+                    if hasInput {
+                        InputInserter.paste(text)
+                    } else {
+                        appState.transcript = text
+                        appState.transcriptInsertFailed = true
+                    }
                 } else {
                     appState.transcript = text
-                    appState.transcriptInsertFailed = true
                 }
             }
         } catch {
             appState.isPolishing = false
+            appState.isExecutingCommand = false
             Self.logger.error("Transcribe failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Send the transcript to the Agent SDK in the sidecar; it drives Bash
+    /// to perform a macOS action (open app, run AppleScript, run Shortcut).
+    /// Shows live state in the pill (isExecutingCommand → commandResult).
+    private func executeVoiceCommand(_ transcript: String) async {
+        struct Params: Encodable { let transcript: String }
+        struct Usage: Decodable {
+            let inputTokens: Int?
+            let outputTokens: Int?
+            let cacheReadTokens: Int?
+            let cacheCreationTokens: Int?
+        }
+        struct Result: Decodable {
+            let summary: String
+            let succeeded: Bool
+            let usage: Usage?
+        }
+
+        appState.isExecutingCommand = true
+        defer { appState.isExecutingCommand = false }
+
+        do {
+            let result: Result = try await sidecar.request(
+                method: "executeCommand",
+                params: Params(transcript: transcript),
+                result: Result.self
+            )
+            if let usage = result.usage {
+                var stats = appState.claudeUsage
+                stats.add(
+                    input: usage.inputTokens ?? 0,
+                    output: usage.outputTokens ?? 0,
+                    cacheRead: usage.cacheReadTokens ?? 0,
+                    cacheCreation: usage.cacheCreationTokens ?? 0
+                )
+                stats.save()
+                appState.claudeUsage = stats
+            }
+            appState.commandResult = .init(summary: result.summary, succeeded: result.succeeded)
+            // Auto-clear the result after a few seconds so the pill returns
+            // to its idle state without the user dismissing.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                guard let self else { return }
+                if appState.commandResult?.summary == result.summary {
+                    appState.commandResult = nil
+                }
+            }
+        } catch {
+            Self.logger.error("executeCommand failed: \(String(describing: error), privacy: .public)")
+            appState.commandResult = .init(
+                summary: "Command failed: \(error.localizedDescription)",
+                succeeded: false
+            )
         }
     }
 

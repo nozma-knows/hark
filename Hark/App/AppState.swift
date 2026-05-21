@@ -28,6 +28,20 @@ final class AppState {
     /// "Polishing" state instead of the final transcript.
     var isPolishing = false
 
+    /// True while a voice command (`.command` trigger) is being executed
+    /// by the Agent SDK. The pill renders "Executing…".
+    var isExecutingCommand = false
+
+    /// Latest voice-command outcome. The pill shows this for a few
+    /// seconds after execution finishes, then clears.
+    var commandResult: CommandResult?
+
+    /// The result of a single executeCommand RPC.
+    struct CommandResult: Equatable {
+        let summary: String
+        let succeeded: Bool
+    }
+
     /// Cumulative Claude usage stats since first use. Persisted to
     /// UserDefaults; never reset by the app.
     var claudeUsage = ClaudeUsage.load()

@@ -1,3 +1,4 @@
+import { executeCommand } from "./executeCommand.ts";
 import { polishTranscript } from "./polishTranscript.ts";
 import { err, ok, RequestSchema, type Response } from "./protocol.ts";
 
@@ -20,6 +21,10 @@ const handlers: Record<string, Handler> = {
   // Falls back to the raw input on any internal failure (handler-level
   // throws are caught by the dispatch loop and surfaced as JSON errors).
   polishTranscript: async (params) => polishTranscript(params),
+
+  // Voice command → macOS action. Claude drives Bash to fulfill the user's
+  // spoken request (open apps, run AppleScript, run Shortcuts, etc.).
+  executeCommand: async (params) => executeCommand(params),
 };
 
 const decoder = new TextDecoder();

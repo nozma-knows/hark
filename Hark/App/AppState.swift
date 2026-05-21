@@ -17,4 +17,9 @@ final class AppState {
     /// starts. The panel renders the transcript when this is non-nil and the
     /// recorder/transcriber are idle.
     var transcript: String?
+
+    /// Whether the most recent transcription was attempted as a paste-into-
+    /// input (Fn + Ctrl) but no focused text input was found. The pill shows
+    /// a "no input focused" hint when this is true.
+    var transcriptInsertFailed = false
 }

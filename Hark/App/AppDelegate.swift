@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let hotkey: HotkeyManager
     let recorder: AudioRecorder
     let transcriber: Transcriber
+    let claudeAuth: ClaudeAuth
     let sidecar: AgentSidecar
     let panelController: PanelWindowController
     let onboardingController: OnboardingWindowController
@@ -20,38 +21,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hotkeyManager = HotkeyManager()
         let audioRecorder = AudioRecorder()
         let transcriberInstance = Transcriber()
-        let sidecarInstance = AgentSidecar()
+        let claudeAuthInstance = ClaudeAuth()
+        let sidecarInstance = AgentSidecar(
+            environmentProvider: { [claudeAuthInstance] in
+                claudeAuthInstance.sidecarEnvironment()
+            }
+        )
         appState = state
         permissions = perms
         hotkey = hotkeyManager
         recorder = audioRecorder
         transcriber = transcriberInstance
+        claudeAuth = claudeAuthInstance
         sidecar = sidecarInstance
         panelController = PanelWindowController(
             appState: state,
             recorder: audioRecorder,
             transcriber: transcriberInstance
         )
-        onboardingController = OnboardingWindowController(permissions: perms)
+        onboardingController = OnboardingWindowController(
+            permissions: perms,
+            claudeAuth: claudeAuthInstance
+        )
         super.init()
 
-        hotkey.onKeyDown = { [weak self] in self?.handleHotkeyDown() }
-        hotkey.onKeyUp = { [weak self] in self?.handleHotkeyUp() }
+        hotkey.onKeyDown = { [weak self] trigger in self?.handleHotkeyDown(trigger) }
+        hotkey.onKeyUp = { [weak self] trigger in self?.handleHotkeyUp(trigger) }
     }
 
+    @ObservationIgnored private var activeTrigger: HotkeyTrigger = .dictate
+
     func applicationDidFinishLaunching(_: Notification) {
-        // LSUIElement in Info.plist already runs us as an accessory app;
-        // this call is defensive in case the plist is overridden.
-        NSApp.setActivationPolicy(.accessory)
+        // Hark is a regular dock app (Wispr Flow-style). LSUIElement is
+        // false in Info.plist so the icon shows up in the Dock.
+        NSApp.setActivationPolicy(.regular)
+
+        // Pill UI is visible from launch — Wispr Flow-style always-on
+        // bottom-center indicator.
+        panelController.showAlways()
 
         NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            // Permissions can flip silently while the user is in System Settings;
-            // re-poll whenever Hark returns to the foreground.
-            MainActor.assumeIsolated { self?.permissions.refresh() }
+            // Permissions and Claude auth can flip silently while the user is
+            // in System Settings / Terminal; re-poll on foreground return.
+            MainActor.assumeIsolated {
+                self?.permissions.refresh()
+                self?.claudeAuth.refresh()
+            }
         }
 
         onboardingController.showIfNeeded()
@@ -62,40 +81,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         transcriber.bootstrap()
     }
 
-    /// Menu-driven panel toggle. Doesn't start/stop recording — the menu's job
-    /// is to give the user a visual escape hatch; the hotkey is the dictation
-    /// trigger.
-    func requestPanelToggle() {
-        guard ensureReady() else { return }
-        appState.isPanelVisible.toggle()
-    }
-
     // MARK: - Hotkey state machine
 
-    private func handleHotkeyDown() {
+    private func handleHotkeyDown(_ trigger: HotkeyTrigger) {
         guard ensureReady() else { return }
         switch hotkey.mode {
         case .hold:
-            startRecording()
+            startRecording(trigger: trigger)
         case .toggle:
             if recorder.state == .recording {
                 stopRecording()
             } else {
-                startRecording()
+                startRecording(trigger: trigger)
             }
         }
     }
 
-    private func handleHotkeyUp() {
+    private func handleHotkeyUp(_: HotkeyTrigger) {
         guard hotkey.mode == .hold, recorder.state == .recording else { return }
         stopRecording()
     }
 
-    private func startRecording() {
+    private func startRecording(trigger: HotkeyTrigger) {
+        activeTrigger = trigger
         appState.transcript = nil
+        appState.transcriptInsertFailed = false
         do {
             try recorder.start()
-            appState.isPanelVisible = true
         } catch {
             Self.logger.error("Failed to start recording: \(String(describing: error), privacy: .public)")
         }
@@ -104,15 +116,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopRecording() {
         let samples = recorder.stop()
         guard !samples.isEmpty else { return }
+        let trigger = activeTrigger
         Task { [weak self] in
-            await self?.transcribeAndShow(samples)
+            await self?.finalizeTranscript(samples, trigger: trigger)
         }
     }
 
-    private func transcribeAndShow(_ samples: [Float]) async {
+    private func finalizeTranscript(_ samples: [Float], trigger: HotkeyTrigger) async {
         do {
-            let text = try await transcriber.transcribe(samples: samples)
-            appState.transcript = text.isEmpty ? nil : text
+            let raw = try await transcriber.transcribe(samples: samples)
+            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+
+            switch trigger {
+            case .dictate:
+                appState.transcript = text
+            case .insert:
+                if InputInserter.hasFocusedTextInput() {
+                    InputInserter.paste(text)
+                    // Don't surface a panel — the text landed where the
+                    // user was already typing.
+                } else {
+                    appState.transcript = text
+                    appState.transcriptInsertFailed = true
+                }
+            }
         } catch {
             Self.logger.error("Transcribe failed: \(String(describing: error), privacy: .public)")
         }

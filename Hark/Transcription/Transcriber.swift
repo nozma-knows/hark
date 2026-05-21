@@ -53,10 +53,14 @@ final class Transcriber {
     private var whisperKit: WhisperKit?
     private var loadedModel: WhisperModel?
 
-    /// Whether the given model's files are already on disk.
+    /// Whether the given model's files are already on disk. WhisperKit's
+    /// HuggingFace downloader writes to a nested path under `modelsDirectory`,
+    /// so we check the AudioEncoder marker at the real location:
+    ///   <base>/models/argmaxinc/whisperkit-coreml/<variant>/AudioEncoder.mlmodelc
     func isDownloaded(_ model: WhisperModel) -> Bool {
-        let dir = Self.modelsDirectory.appending(path: model.variant, directoryHint: .isDirectory)
-        return FileManager.default.fileExists(atPath: dir.path)
+        let encoder = Self.modelsDirectory
+            .appending(path: "models/argmaxinc/whisperkit-coreml/\(model.variant)/AudioEncoder.mlmodelc")
+        return FileManager.default.fileExists(atPath: encoder.path)
     }
 
     /// Update the user's chosen model, persist it, and load it (downloading

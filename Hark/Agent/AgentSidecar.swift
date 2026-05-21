@@ -41,6 +41,16 @@ final class AgentSidecar {
     private var pendingRequests: [String: CheckedContinuation<Data, Error>] = [:]
     private var nextRequestId: UInt64 = 0
 
+    /// Builds the env to inject into the sidecar Process on each spawn. Called
+    /// fresh per start so re-auth flows are picked up without re-instantiating.
+    private let environmentProvider: @MainActor () -> [String: String]
+
+    init(environmentProvider: @escaping @MainActor () -> [String: String] = {
+        ProcessInfo.processInfo.environment
+    }) {
+        self.environmentProvider = environmentProvider
+    }
+
     var isRunning: Bool {
         process?.isRunning ?? false
     }
@@ -59,6 +69,7 @@ final class AgentSidecar {
         proc.standardInput = inPipe
         proc.standardOutput = outPipe
         proc.standardError = FileHandle.nullDevice
+        proc.environment = environmentProvider()
         proc.terminationHandler = { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.handleTermination()

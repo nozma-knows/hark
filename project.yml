@@ -91,12 +91,14 @@ targets:
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundlePackageType: APPL
-        LSUIElement: true
+        LSUIElement: false
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSHumanReadableCopyright: "Copyright © 2026 Noah Milberger."
         NSMicrophoneUsageDescription: "Hark transcribes your dictation on-device to draft tickets."
         NSAppleEventsUsageDescription: "Hark opens Terminal to launch Claude Code sessions for created tickets."
         NSHighResolutionCapable: true
+        CFBundleIconName: AppIcon
+        CFBundleIconFile: AppIcon
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.milbo.hark

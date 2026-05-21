@@ -16,11 +16,13 @@ final class OnboardingWindowController: NSObject {
     private static let pollInterval: TimeInterval = 0.5
 
     private let permissions: PermissionsManager
+    private let claudeAuth: ClaudeAuth
     private var window: NSWindow?
     private var pollTimer: Timer?
 
-    init(permissions: PermissionsManager) {
+    init(permissions: PermissionsManager, claudeAuth: ClaudeAuth) {
         self.permissions = permissions
+        self.claudeAuth = claudeAuth
         super.init()
     }
 
@@ -68,7 +70,10 @@ final class OnboardingWindowController: NSObject {
         window.titleVisibility = .hidden
         window.delegate = self
 
-        let content = OnboardingView(permissions: permissions) { [weak self] in
+        let content = OnboardingView(
+            permissions: permissions,
+            claudeAuth: claudeAuth
+        ) { [weak self] in
             self?.close()
         }
         window.contentView = NSHostingView(rootView: content)
@@ -80,6 +85,7 @@ final class OnboardingWindowController: NSObject {
         let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.permissions.refresh()
+                self?.claudeAuth.refresh()
             }
         }
         RunLoop.main.add(timer, forMode: .common)

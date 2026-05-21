@@ -1,5 +1,6 @@
 import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
+import { formatChromeProfilesForPrompt, loadChromeProfiles } from "./chromeProfiles.ts";
 
 /**
  * Voice command → macOS action. Claude reads the user's spoken request,
@@ -42,6 +43,9 @@ Available Bash tools you should reach for first (they're fast, no GUI required):
     open https://github.com
     open -na "Google Chrome" --args --profile-directory="Default" "https://youtube.com"
     open -na "Google Chrome" --args --profile-directory="Profile 1" "https://github.com"
+  When the user names a Chrome profile (e.g. "my personal profile", "work
+  profile"), look up the matching --profile-directory in the profile
+  table below — never guess "Default" or "Profile 1" blindly.
 - \`osascript -e '...'\` — AppleScript for in-app control (Chrome, Safari, Mail, Notes, Music, Finder, etc.). Examples:
     osascript -e 'tell application "Music" to play'
     osascript -e 'tell application "Safari" to make new document with properties {URL:"https://example.com"}'
@@ -71,13 +75,22 @@ export async function executeCommand(raw: unknown): Promise<ExecuteCommandResult
   let succeeded = false;
   let usage: ExecuteCommandResult["usage"];
 
+  // Pre-load Chrome's profile name → directory mapping so Claude can map
+  // "my personal profile" / "work profile" to the right --profile-directory
+  // flag without guessing. Empty string when Chrome isn't installed.
+  const chromeProfilesSection = formatChromeProfilesForPrompt(
+    await loadChromeProfiles()
+  );
+
   // Tell the SDK where the user's locally-installed claude binary lives
   // (we don't bundle the SDK's optional 200 MB native binary in the
   // bun-compiled sidecar). HARK_CLAUDE_BINARY is set by ClaudeAuth.
   const claudeBinary = process.env.HARK_CLAUDE_BINARY;
 
+  const systemPrompt = `${SYSTEM_PROMPT}${chromeProfilesSection}`;
+
   for await (const message of query({
-    prompt: `${SYSTEM_PROMPT}\n\nVoice command: ${transcript}`,
+    prompt: `${systemPrompt}\n\nVoice command: ${transcript}`,
     options: {
       maxTurns: 6,
       allowedTools: ["Bash"],

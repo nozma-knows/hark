@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Hark pre-commit: lint and format-check staged Swift files.
+# To enable: run `scripts/install-hooks.sh` once after cloning.
+set -euo pipefail
+
+# Collect staged Swift files (Added/Copied/Modified). NUL-separated for paths with spaces.
+STAGED=()
+while IFS= read -r -d '' file; do
+    STAGED+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACM -z -- '*.swift')
+
+if [ ${#STAGED[@]} -eq 0 ]; then
+    exit 0
+fi
+
+if ! command -v swiftformat >/dev/null 2>&1; then
+    echo "pre-commit: swiftformat not installed — run 'brew install swiftformat'" >&2
+    exit 1
+fi
+if ! command -v swiftlint >/dev/null 2>&1; then
+    echo "pre-commit: swiftlint not installed — run 'brew install swiftlint'" >&2
+    exit 1
+fi
+
+echo "pre-commit: checking ${#STAGED[@]} Swift file(s)…"
+swiftformat --lint "${STAGED[@]}"
+swiftlint lint --strict --quiet "${STAGED[@]}"
+echo "pre-commit: ok"

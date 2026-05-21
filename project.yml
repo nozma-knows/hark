@@ -97,8 +97,10 @@ targets:
         NSMicrophoneUsageDescription: "Hark transcribes your dictation on-device to draft tickets."
         NSAppleEventsUsageDescription: "Hark opens Terminal to launch Claude Code sessions for created tickets."
         NSHighResolutionCapable: true
+        # Only CFBundleIconName — when CFBundleIconFile is also set, macOS
+        # reads the (truncated, 14 KB) AppIcon.icns instead of the full
+        # Assets.car asset, and renders the generic placeholder.
         CFBundleIconName: AppIcon
-        CFBundleIconFile: AppIcon
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.milbo.hark

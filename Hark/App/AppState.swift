@@ -27,4 +27,48 @@ final class AppState {
     /// (punctuation / casing / filler cleanup). The pill renders a
     /// "Polishing" state instead of the final transcript.
     var isPolishing = false
+
+    /// Cumulative Claude usage stats since first use. Persisted to
+    /// UserDefaults; never reset by the app.
+    var claudeUsage = ClaudeUsage.load()
+}
+
+/// Persistent Claude usage counters. Cumulative across launches.
+struct ClaudeUsage: Codable, Equatable {
+    var inputTokens: Int = 0
+    var outputTokens: Int = 0
+    var cacheReadTokens: Int = 0
+    var cacheCreationTokens: Int = 0
+    var requestCount: Int = 0
+    var lastUsedAt: Date?
+
+    var totalTokens: Int {
+        inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens
+    }
+
+    private static let defaultsKey = "co.milbo.hark.claudeUsage"
+
+    static func load() -> Self {
+        guard
+            let data = UserDefaults.standard.data(forKey: defaultsKey),
+            let decoded = try? JSONDecoder().decode(Self.self, from: data) else
+        {
+            return Self()
+        }
+        return decoded
+    }
+
+    func save() {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        UserDefaults.standard.set(data, forKey: Self.defaultsKey)
+    }
+
+    mutating func add(input: Int, output: Int, cacheRead: Int, cacheCreation: Int) {
+        inputTokens += input
+        outputTokens += output
+        cacheReadTokens += cacheRead
+        cacheCreationTokens += cacheCreation
+        requestCount += 1
+        lastUsedAt = Date()
+    }
 }

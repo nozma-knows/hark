@@ -24,7 +24,8 @@ struct HarkApp: App {
             SettingsView(
                 hotkey: delegate.hotkey,
                 transcriber: delegate.transcriber,
-                claudeAuth: delegate.claudeAuth
+                claudeAuth: delegate.claudeAuth,
+                appState: delegate.appState
             )
         }
     }

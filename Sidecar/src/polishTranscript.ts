@@ -17,6 +17,13 @@ export interface PolishTranscriptResult {
   polished: string;
   /** Whether Claude actually produced a different string than the input. */
   changed: boolean;
+  /** Token usage from the underlying Claude call. Camel-case for the Swift Codable. */
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+  };
 }
 
 const SYSTEM_PROMPT = `You post-process raw dictation transcripts from Whisper. Clean the input up so it reads naturally without changing what the user said.
@@ -44,6 +51,7 @@ export async function polishTranscript(
   // Single-shot prompt — no tools, no follow-ups. Claude reads the dictation
   // and emits the cleaned version.
   let polished = "";
+  let usage: PolishTranscriptResult["usage"];
   for await (const message of query({
     prompt: `${SYSTEM_PROMPT}\n\nRaw dictation:\n${text}`,
     options: {
@@ -52,13 +60,24 @@ export async function polishTranscript(
   }) as AsyncIterable<SDKMessage>) {
     if (message.type === "result" && message.subtype === "success") {
       polished = message.result;
+      // The result message carries cumulative usage for the call. Field
+      // names follow Anthropic's API; we re-key into camelCase for Swift.
+      const u = (message as unknown as { usage?: Record<string, number> }).usage;
+      if (u) {
+        usage = {
+          inputTokens: Number(u.input_tokens ?? 0),
+          outputTokens: Number(u.output_tokens ?? 0),
+          cacheReadTokens: Number(u.cache_read_input_tokens ?? 0),
+          cacheCreationTokens: Number(u.cache_creation_input_tokens ?? 0),
+        };
+      }
     }
   }
 
   const cleaned = polished.trim();
   if (cleaned.length === 0) {
     // Fall back to raw rather than dropping the user's words on the floor.
-    return { polished: text, changed: false };
+    return { polished: text, changed: false, usage };
   }
-  return { polished: cleaned, changed: cleaned !== text };
+  return { polished: cleaned, changed: cleaned !== text, usage };
 }

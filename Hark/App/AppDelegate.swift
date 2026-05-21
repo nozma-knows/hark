@@ -1,6 +1,14 @@
 import AppKit
 import OSLog
 
+extension Notification.Name {
+    /// Posted by the pill's settings button. AppDelegate listens and forwards
+    /// to `NSApp.sendAction(showSettingsWindow:)` — which works reliably from
+    /// the AppDelegate context but is unreliable when called directly from a
+    /// SwiftUI button inside a non-activating NSPanel.
+    static let openHarkSettings = Notification.Name("co.milbo.hark.openSettings")
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let logger = Logger(subsystem: "co.milbo.hark", category: "AppDelegate")
@@ -70,6 +78,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated {
                 self?.permissions.refresh()
                 self?.claudeAuth.refresh()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .openHarkSettings,
+            object: nil,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                NSApp.activate(ignoringOtherApps: true)
+                let selector = NSSelectorFromString("showSettingsWindow:")
+                NSApp.sendAction(selector, to: nil, from: nil)
             }
         }
 
@@ -162,12 +182,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Send the trimmed Whisper output to Claude (via the Bun sidecar) for
     /// punctuation / casing / filler cleanup. Returns the polished string,
-    /// or the raw input unchanged on any failure.
+    /// or the raw input unchanged on any failure. Side-effect: accumulates
+    /// usage stats into `appState.claudeUsage` (persisted).
     private func polishOrFallback(_ raw: String) async -> String {
         struct Params: Encodable { let text: String }
+        struct Usage: Decodable {
+            let inputTokens: Int?
+            let outputTokens: Int?
+            let cacheReadTokens: Int?
+            let cacheCreationTokens: Int?
+        }
         struct Result: Decodable {
             let polished: String
             let changed: Bool
+            let usage: Usage?
         }
         do {
             let result: Result = try await sidecar.request(
@@ -175,6 +203,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 params: Params(text: raw),
                 result: Result.self
             )
+            if let usage = result.usage {
+                var stats = appState.claudeUsage
+                stats.add(
+                    input: usage.inputTokens ?? 0,
+                    output: usage.outputTokens ?? 0,
+                    cacheRead: usage.cacheReadTokens ?? 0,
+                    cacheCreation: usage.cacheCreationTokens ?? 0
+                )
+                stats.save()
+                appState.claudeUsage = stats
+            }
             return result.polished
         } catch {
             Self.logger.error("Polish failed (using raw): \(String(describing: error), privacy: .public)")

@@ -5,6 +5,7 @@ struct SettingsView: View {
     let hotkey: HotkeyManager
     let transcriber: Transcriber
     let claudeAuth: ClaudeAuth
+    let appState: AppState
 
     var body: some View {
         TabView {
@@ -14,12 +15,12 @@ struct SettingsView: View {
                 .tabItem { Label("Hotkey", systemImage: "keyboard") }
             LinearPane()
                 .tabItem { Label("Linear", systemImage: "rectangle.stack") }
-            ClaudePane(auth: claudeAuth)
+            ClaudePane(auth: claudeAuth, appState: appState)
                 .tabItem { Label("Claude", systemImage: "sparkles") }
             ModelsPane(transcriber: transcriber)
                 .tabItem { Label("Models", systemImage: "cpu") }
         }
-        .frame(width: 560, height: 420)
+        .frame(width: 560, height: 460)
     }
 }
 
@@ -89,6 +90,7 @@ private struct LinearPane: View {
 
 private struct ClaudePane: View {
     @Bindable var auth: ClaudeAuth
+    @Bindable var appState: AppState
 
     var body: some View {
         Form {
@@ -132,9 +134,35 @@ private struct ClaudePane: View {
                     }
                 }
             }
+
+            Section {
+                UsageRow(label: "Requests", value: "\(appState.claudeUsage.requestCount)")
+                UsageRow(label: "Input tokens", value: formatted(appState.claudeUsage.inputTokens))
+                UsageRow(label: "Output tokens", value: formatted(appState.claudeUsage.outputTokens))
+                if appState.claudeUsage.cacheReadTokens > 0 {
+                    UsageRow(label: "Cache read", value: formatted(appState.claudeUsage.cacheReadTokens))
+                }
+                if appState.claudeUsage.cacheCreationTokens > 0 {
+                    UsageRow(label: "Cache write", value: formatted(appState.claudeUsage.cacheCreationTokens))
+                }
+                UsageRow(label: "Total tokens", value: formatted(appState.claudeUsage.totalTokens))
+                if let lastUsed = appState.claudeUsage.lastUsedAt {
+                    UsageRow(label: "Last used", value: lastUsed.formatted(date: .abbreviated, time: .shortened))
+                }
+            } header: {
+                Text("Usage")
+            } footer: {
+                Text("Cumulative across launches; Hark's polish calls only.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    private func formatted(_ value: Int) -> String {
+        value.formatted(.number.grouping(.automatic))
     }
 
     private var statusIcon: String {
@@ -299,6 +327,23 @@ private struct ModelRow: View {
     }
 }
 
+// MARK: - Usage row helper
+
+private struct UsageRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .monospacedDigit()
+        }
+    }
+}
+
 // MARK: - Placeholder shell
 
 private struct SettingsPlaceholder: View {
@@ -328,6 +373,7 @@ private struct SettingsPlaceholder: View {
     SettingsView(
         hotkey: HotkeyManager(),
         transcriber: Transcriber(),
-        claudeAuth: ClaudeAuth()
+        claudeAuth: ClaudeAuth(),
+        appState: AppState()
     )
 }

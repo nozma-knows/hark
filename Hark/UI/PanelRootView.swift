@@ -112,8 +112,7 @@ private struct IdlePill: View {
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 4)
                     Button {
-                        NSApp.activate(ignoringOtherApps: true)
-                        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                        NotificationCenter.default.post(name: .openHarkSettings, object: nil)
                     } label: {
                         Image(systemName: "gearshape")
                             .font(.system(size: 11, weight: .medium))

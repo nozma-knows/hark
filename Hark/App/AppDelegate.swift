@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let hotkey: HotkeyManager
     let recorder: AudioRecorder
     let transcriber: Transcriber
+    let sidecar: AgentSidecar
     let panelController: PanelWindowController
     let onboardingController: OnboardingWindowController
 
@@ -19,11 +20,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hotkeyManager = HotkeyManager()
         let audioRecorder = AudioRecorder()
         let transcriberInstance = Transcriber()
+        let sidecarInstance = AgentSidecar()
         appState = state
         permissions = perms
         hotkey = hotkeyManager
         recorder = audioRecorder
         transcriber = transcriberInstance
+        sidecar = sidecarInstance
         panelController = PanelWindowController(
             appState: state,
             recorder: audioRecorder,

@@ -1,0 +1,24 @@
+{
+  "name": "hark-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bun-built single-binary sidecar that bridges Hark (Swift) to the Claude Agent SDK over NDJSON-over-stdio.",
+  "type": "module",
+  "scripts": {
+    "build": "bun build src/index.ts --compile --outfile dist/hark-sidecar",
+    "dev": "bun --watch src/index.ts",
+    "typecheck": "bun --bun tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.6",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}

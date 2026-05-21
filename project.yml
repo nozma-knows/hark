@@ -32,7 +32,11 @@ settings:
     SWIFT_COMPILATION_MODE: wholemodule
     DEAD_CODE_STRIPPING: YES
     CLANG_ENABLE_MODULES: YES
-    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    # User script sandboxing is OFF because the Bun-sidecar pre-build phase
+    # reads/writes outside the sandboxed inputs/outputs (runs `bun install`,
+    # touches node_modules). Hark is a developer tool, not a hardened app,
+    # so this trade is acceptable for now.
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
     ALWAYS_SEARCH_USER_PATHS: NO
   configs:
     Debug:
@@ -54,9 +58,28 @@ targets:
       - path: Hark
         excludes:
           - Generated
+          - Resources/Sidecar
+      # The compiled Bun sidecar has no file extension, so XcodeGen wouldn't
+      # auto-classify it as a resource. Explicit override puts it in the
+      # Copy Bundle Resources phase. `optional: true` lets fresh clones
+      # generate the project before the first sidecar build.
+      - path: Hark/Resources/Sidecar
+        buildPhase: resources
+        optional: true
     dependencies:
       - package: KeyboardShortcuts
       - package: WhisperKit
+    preBuildScripts:
+      - name: Build Bun Sidecar
+        path: scripts/build-sidecar.sh
+        inputFiles:
+          - $(SRCROOT)/Sidecar/src/index.ts
+          - $(SRCROOT)/Sidecar/src/protocol.ts
+          - $(SRCROOT)/Sidecar/package.json
+          - $(SRCROOT)/Sidecar/bun.lock
+        outputFiles:
+          - $(SRCROOT)/Hark/Resources/Sidecar/hark-sidecar
+        basedOnDependencyAnalysis: true
     info:
       path: Hark/Generated/Info.plist
       properties:

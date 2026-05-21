@@ -37,13 +37,19 @@
 --header ignore
 --marktypes never
 --extensionacl on-declarations
---funcattributes prev-line
---typeattributes prev-line
---storedvarattrs same-line
---computedvarattrs prev-line
+# Attribute placement is owned by SwiftLint's `attributes` rule (which
+# distinguishes arguments-present vs simple) — preserve here to avoid conflict.
+--funcattributes preserve
+--typeattributes preserve
+--storedvarattrs preserve
+--computedvarattrs preserve
 
 # Exclusions
 --exclude Hark/Generated,Hark.xcodeproj,build,DerivedData,.build,Sidecar/node_modules,Sidecar/dist
+
+# Disable rules that fight clean SwiftUI / Observable patterns
+--disable wrapPropertyBodies  # `var id: Self { self }` is cleaner one-line
+--disable modifierOrder       # owned by SwiftLint's modifier_order rule
 
 # Enable extras
 --enable blankLinesBetweenScopes

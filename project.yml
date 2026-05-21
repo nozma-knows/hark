@@ -1,5 +1,16 @@
 name: Hark
 
+packages:
+  # 2.4.0 requires swift-tools 6.1 (Xcode 16.3+); pinned to 2.3.x for Xcode 16.2.
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    exactVersion: "2.3.0"
+  # On-device transcription via Apple Neural Engine — CoreML models downloaded
+  # at runtime into ~/Library/Application Support/Hark/Models/.
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    from: "1.0.0"
+
 options:
   bundleIdPrefix: co.milbo
   deploymentTarget:
@@ -21,7 +32,11 @@ settings:
     SWIFT_COMPILATION_MODE: wholemodule
     DEAD_CODE_STRIPPING: YES
     CLANG_ENABLE_MODULES: YES
-    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    # User script sandboxing is OFF because the Bun-sidecar pre-build phase
+    # reads/writes outside the sandboxed inputs/outputs (runs `bun install`,
+    # touches node_modules). Hark is a developer tool, not a hardened app,
+    # so this trade is acceptable for now.
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
     ALWAYS_SEARCH_USER_PATHS: NO
   configs:
     Debug:
@@ -43,6 +58,28 @@ targets:
       - path: Hark
         excludes:
           - Generated
+          - Resources/Sidecar
+      # The compiled Bun sidecar has no file extension, so XcodeGen wouldn't
+      # auto-classify it as a resource. Explicit override puts it in the
+      # Copy Bundle Resources phase. `optional: true` lets fresh clones
+      # generate the project before the first sidecar build.
+      - path: Hark/Resources/Sidecar
+        buildPhase: resources
+        optional: true
+    dependencies:
+      - package: KeyboardShortcuts
+      - package: WhisperKit
+    preBuildScripts:
+      - name: Build Bun Sidecar
+        path: scripts/build-sidecar.sh
+        inputFiles:
+          - $(SRCROOT)/Sidecar/src/index.ts
+          - $(SRCROOT)/Sidecar/src/protocol.ts
+          - $(SRCROOT)/Sidecar/package.json
+          - $(SRCROOT)/Sidecar/bun.lock
+        outputFiles:
+          - $(SRCROOT)/Hark/Resources/Sidecar/hark-sidecar
+        basedOnDependencyAnalysis: true
     info:
       path: Hark/Generated/Info.plist
       properties:
@@ -54,20 +91,27 @@ targets:
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleInfoDictionaryVersion: "6.0"
         CFBundlePackageType: APPL
-        LSUIElement: true
+        LSUIElement: false
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSHumanReadableCopyright: "Copyright © 2026 Noah Milberger."
         NSMicrophoneUsageDescription: "Hark transcribes your dictation on-device to draft tickets."
         NSAppleEventsUsageDescription: "Hark opens Terminal to launch Claude Code sessions for created tickets."
         NSHighResolutionCapable: true
+        # Only CFBundleIconName — when CFBundleIconFile is also set, macOS
+        # reads the (truncated, 14 KB) AppIcon.icns instead of the full
+        # Assets.car asset, and renders the generic placeholder.
+        CFBundleIconName: AppIcon
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.milbo.hark
         PRODUCT_NAME: Hark
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_HARDENED_RUNTIME: NO
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        # "Hark Dev" is a self-signed cert created by scripts/setup-dev-signing.sh.
+        # Stable across rebuilds so macOS TCC (Accessibility, Microphone, …)
+        # remembers grants. CI overrides to ad-hoc via xcodebuild args.
+        CODE_SIGN_IDENTITY: "Hark Dev"
         DEVELOPMENT_TEAM: ""
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_PREVIEWS: YES

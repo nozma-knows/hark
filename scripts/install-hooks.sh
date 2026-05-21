@@ -6,3 +6,7 @@ ROOT="$(git rev-parse --show-toplevel)"
 git -C "$ROOT" config core.hooksPath .githooks
 chmod +x "$ROOT/.githooks/"*
 echo "Installed hooks from .githooks/"
+echo ""
+echo "Next: set up stable dev signing so macOS TCC permissions persist"
+echo "across rebuilds:"
+echo "    ./scripts/setup-dev-signing.sh"

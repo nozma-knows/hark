@@ -4,9 +4,10 @@
 // and emit the full size matrix the asset catalog expects.
 //
 //   swift scripts/build-app-icon.swift [source.png] [bg-hex] [output-dir]
+//   (run from the /macos directory)
 //
 // Defaults:
-//   source.png  → scripts/icon-source/hark-mark.png
+//   source.png  → ../assets/hark-mark.png    (canonical brand artwork)
 //   bg-hex      → #FFFFFF (clean white, matches Notes / Bear / Reminders)
 //   output-dir  → Hark/Resources/Assets.xcassets/AppIcon.appiconset
 //
@@ -22,7 +23,7 @@ import SwiftUI
 @MainActor
 func main() {
     let args = CommandLine.arguments
-    let sourcePath = args.count >= 2 ? args[1] : "scripts/icon-source/hark-mark.png"
+    let sourcePath = args.count >= 2 ? args[1] : "../assets/hark-mark.png"
     let bgHex = args.count >= 3 ? args[2] : "#FFFFFF"
     let outputDir = args.count >= 4 ? args[3] : "Hark/Resources/Assets.xcassets/AppIcon.appiconset"
 

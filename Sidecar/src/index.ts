@@ -1,3 +1,4 @@
+import { polishTranscript } from "./polishTranscript.ts";
 import { err, ok, RequestSchema, type Response } from "./protocol.ts";
 
 /**
@@ -14,6 +15,11 @@ const handlers: Record<string, Handler> = {
     pong: Date.now(),
     echoed: params ?? null,
   }),
+
+  // Clean a raw Whisper transcript via Claude — punctuation, casing, fillers.
+  // Falls back to the raw input on any internal failure (handler-level
+  // throws are caught by the dispatch loop and surfaced as JSON errors).
+  polishTranscript: async (params) => polishTranscript(params),
 };
 
 const decoder = new TextDecoder();

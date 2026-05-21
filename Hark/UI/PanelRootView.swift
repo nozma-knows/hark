@@ -50,6 +50,9 @@ struct PanelRootView: View {
         if case .transcribing = transcriber.state {
             return .processing(label: "Transcribing")
         }
+        if appState.isPolishing {
+            return .processing(label: "Polishing")
+        }
         if case .loading = transcriber.state {
             return .processing(label: "Loading model")
         }

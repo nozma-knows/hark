@@ -22,4 +22,9 @@ final class AppState {
     /// input (Fn + Ctrl) but no focused text input was found. The pill shows
     /// a "no input focused" hint when this is true.
     var transcriptInsertFailed = false
+
+    /// True while Claude is post-processing the raw Whisper output
+    /// (punctuation / casing / filler cleanup). The pill renders a
+    /// "Polishing" state instead of the final transcript.
+    var isPolishing = false
 }

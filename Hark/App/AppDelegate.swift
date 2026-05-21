@@ -125,8 +125,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func finalizeTranscript(_ samples: [Float], trigger: HotkeyTrigger) async {
         do {
             let raw = try await transcriber.transcribe(samples: samples)
-            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { return }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+
+            // Polish via Claude before delivering. Falls back to raw on any
+            // failure (no auth, sidecar crash, network) so dictation always
+            // produces something.
+            appState.isPolishing = true
+            let text = await polishOrFallback(trimmed)
+            appState.isPolishing = false
 
             switch trigger {
             case .dictate:
@@ -142,7 +149,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         } catch {
+            appState.isPolishing = false
             Self.logger.error("Transcribe failed: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Send the trimmed Whisper output to Claude (via the Bun sidecar) for
+    /// punctuation / casing / filler cleanup. Returns the polished string,
+    /// or the raw input unchanged on any failure.
+    private func polishOrFallback(_ raw: String) async -> String {
+        struct Params: Encodable { let text: String }
+        struct Result: Decodable {
+            let polished: String
+            let changed: Bool
+        }
+        do {
+            let result: Result = try await sidecar.request(
+                method: "polishTranscript",
+                params: Params(text: raw),
+                result: Result.self
+            )
+            return result.polished
+        } catch {
+            Self.logger.error("Polish failed (using raw): \(String(describing: error), privacy: .public)")
+            return raw
         }
     }
 

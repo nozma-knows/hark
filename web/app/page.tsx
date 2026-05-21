@@ -8,32 +8,11 @@ export default function Home() {
   return (
     <main className="flex-1 flex flex-col items-center px-6 sm:px-8">
       <Hero />
-      <Demo />
       <Features />
       <HowItWorks />
       <Install />
       <Footer />
     </main>
-  );
-}
-
-function Demo() {
-  return (
-    <section className="w-full max-w-3xl pb-16 -mt-4">
-      <div className="rounded-2xl overflow-hidden ring-1 ring-zinc-200 dark:ring-zinc-800 shadow-[0_30px_80px_-30px_rgba(0,0,0,0.25)] dark:shadow-[0_30px_80px_-30px_rgba(0,0,0,0.6)]">
-        <video
-          src="/hark-promo.mp4"
-          poster="/hark-icon.png"
-          autoPlay
-          muted
-          loop
-          playsInline
-          preload="auto"
-          aria-label="Hark in action"
-          className="w-full h-auto block bg-zinc-50 dark:bg-zinc-900"
-        />
-      </div>
-    </section>
   );
 }
 

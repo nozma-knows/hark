@@ -1,0 +1,22 @@
+{
+  "name": "video",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hark promo video — Remotion compositions for the landing page hero, social posts, and product demos.",
+  "scripts": {
+    "dev": "remotion studio",
+    "build": "remotion render",
+    "build:promo": "remotion render Promo out/hark-promo.mp4",
+    "lint": "eslint src/ --max-warnings 0"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.15",
+    "typescript": "^5.6.3"
+  }
+}

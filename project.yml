@@ -74,8 +74,11 @@ targets:
         PRODUCT_NAME: Hark
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_HARDENED_RUNTIME: NO
-        CODE_SIGN_STYLE: Automatic
-        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        # "Hark Dev" is a self-signed cert created by scripts/setup-dev-signing.sh.
+        # Stable across rebuilds so macOS TCC (Accessibility, Microphone, …)
+        # remembers grants. CI overrides to ad-hoc via xcodebuild args.
+        CODE_SIGN_IDENTITY: "Hark Dev"
         DEVELOPMENT_TEAM: ""
         COMBINE_HIDPI_IMAGES: YES
         ENABLE_PREVIEWS: YES

@@ -49,6 +49,7 @@
 
 # Disable rules that fight clean SwiftUI / Observable patterns
 --disable wrapPropertyBodies  # `var id: Self { self }` is cleaner one-line
+--disable modifierOrder       # owned by SwiftLint's modifier_order rule
 
 # Enable extras
 --enable blankLinesBetweenScopes

@@ -16,6 +16,12 @@ struct OnboardingView: View {
             }
             .padding(.horizontal, 24)
 
+            if permissions.accessibilityTrusted {
+                relaunchBanner
+                    .padding(.horizontal, 24)
+                    .padding(.top, 14)
+            }
+
             Spacer(minLength: 24)
 
             footer
@@ -58,6 +64,37 @@ struct OnboardingView: View {
             status: axCardStatus,
             actionLabel: axCardActionLabel,
             action: axCardAction
+        )
+    }
+
+    /// macOS caches an app's Accessibility trust at process-start time for the
+    /// CGEventTap that KeyboardShortcuts installs — granting mid-run leaves
+    /// trust true but the tap dead until next launch.
+    private var relaunchBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Relaunch Hark for the global hotkey to start working.")
+                    .font(.callout.weight(.medium))
+                Text("Accessibility trust is cached at launch.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Relaunch") {
+                relaunch()
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.orange.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(.orange.opacity(0.4), lineWidth: 0.5)
         )
     }
 
@@ -122,6 +159,17 @@ struct OnboardingView: View {
         if !permissions.accessibilityTrusted {
             permissions.promptAccessibility()
             permissions.openAccessibilitySettings()
+        }
+    }
+
+    private func relaunch() {
+        guard let bundleURL = Bundle.main.bundleURL as URL? else { return }
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: config) { _, _ in
+            Task { @MainActor in
+                NSApplication.shared.terminate(nil)
+            }
         }
     }
 }

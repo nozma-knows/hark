@@ -1,6 +1,26 @@
 import SwiftUI
 
 struct PanelRootView: View {
+    @Bindable var recorder: AudioRecorder
+
+    var body: some View {
+        Group {
+            switch recorder.state {
+            case .idle:
+                IdleView()
+            case .recording:
+                RecordingView(recorder: recorder)
+            case .processing:
+                ProcessingView()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
+        .animation(.snappy(duration: 0.18), value: recorder.state)
+    }
+}
+
+private struct IdleView: View {
     var body: some View {
         VStack(spacing: 14) {
             Image(systemName: "waveform")
@@ -14,13 +34,24 @@ struct PanelRootView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(32)
-        .background(.regularMaterial)
     }
 }
 
-#Preview {
-    PanelRootView()
+private struct ProcessingView: View {
+    var body: some View {
+        VStack(spacing: 14) {
+            ProgressView()
+                .controlSize(.large)
+            Text("Transcribing…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding(32)
+    }
+}
+
+#Preview("Idle") {
+    PanelRootView(recorder: AudioRecorder())
         .frame(width: 560, height: 320)
 }

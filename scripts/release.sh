@@ -66,12 +66,43 @@ else
         -srcfolder "${APP}" "${DMG}"
 fi
 
-echo "==> [5/5] Summary"
 DMG_BYTES=$(stat -f%z "${DMG}" 2>/dev/null || stat -c%s "${DMG}")
+
+echo "==> [5/5] Uploading to Cloudflare R2"
+# Upload is opt-in: skip cleanly if the user hasn't configured R2 locally
+# (still useful to be able to cut a notarized .app + .dmg without publishing).
+R2_PROFILE="${R2_PROFILE:-r2}"
+R2_BUCKET_NAME="${R2_BUCKET:-hark-releases}"
+R2_PUBLIC_BASE_URL="${R2_PUBLIC_BASE:-https://tellhark.com}"
+
+if [ -z "${R2_ACCOUNT_ID:-}" ]; then
+    echo "    R2_ACCOUNT_ID not set — skipping upload."
+    echo "    To enable: add the env var to your shell + run \`aws configure --profile r2\`."
+    UPLOADED=false
+elif ! command -v aws >/dev/null 2>&1; then
+    echo "    aws CLI not installed — skipping upload (\`brew install awscli\`)."
+    UPLOADED=false
+else
+    ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+    aws s3 cp "${DMG}" "s3://${R2_BUCKET_NAME}/Hark-${VERSION}.dmg" \
+        --profile "${R2_PROFILE}" \
+        --endpoint-url "${ENDPOINT}" \
+        --content-type "application/x-apple-diskimage"
+    # `latest.dmg` is a stable URL the landing page links to.
+    aws s3 cp "${DMG}" "s3://${R2_BUCKET_NAME}/latest.dmg" \
+        --profile "${R2_PROFILE}" \
+        --endpoint-url "${ENDPOINT}" \
+        --content-type "application/x-apple-diskimage"
+    UPLOADED=true
+fi
+
+echo ""
+echo "==> Summary"
 echo "    DMG:  ${DMG}"
 echo "    Size: $((DMG_BYTES / 1024 / 1024)) MB"
-echo ""
-echo "TODO: upload to Cloudflare R2 (bucket not yet provisioned)."
-echo "      hark.milbo.co/releases/v${VERSION}/Hark-${VERSION}.dmg"
+if [ "${UPLOADED}" = "true" ]; then
+    echo "    Live: ${R2_PUBLIC_BASE_URL}/Hark-${VERSION}.dmg"
+    echo "          ${R2_PUBLIC_BASE_URL}/latest.dmg"
+fi
 echo ""
 echo "✅ Release ${VERSION} built and notarized."

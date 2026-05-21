@@ -101,6 +101,7 @@ targets:
         # reads the (truncated, 14 KB) AppIcon.icns instead of the full
         # Assets.car asset, and renders the generic placeholder.
         CFBundleIconName: AppIcon
+        LSApplicationCategoryType: public.app-category.productivity
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: co.milbo.hark

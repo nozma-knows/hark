@@ -116,7 +116,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopRecording() {
         let samples = recorder.stop()
         guard !samples.isEmpty else { return }
-        let trigger = activeTrigger
+        // Use the LIVE trigger at the moment Fn is released — not the locked-in
+        // value from Fn-down. This lets the user add/remove Ctrl mid-press and
+        // the resulting action matches what they were holding when they let go.
+        let trigger = hotkey.currentTrigger
+        Self.logger.info("stopRecording with trigger: \(String(describing: trigger), privacy: .public)")
         Task { [weak self] in
             await self?.finalizeTranscript(samples, trigger: trigger)
         }
@@ -139,7 +143,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .dictate:
                 appState.transcript = text
             case .insert:
-                if InputInserter.hasFocusedTextInput() {
+                let hasInput = InputInserter.hasFocusedTextInput()
+                Self.logger.info("Insert mode: hasFocusedInput=\(hasInput, privacy: .public)")
+                if hasInput {
                     InputInserter.paste(text)
                     // Don't surface a panel — the text landed where the
                     // user was already typing.

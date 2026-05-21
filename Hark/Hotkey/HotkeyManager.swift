@@ -4,9 +4,11 @@ import Foundation
 import Observation
 import OSLog
 
-/// Which gesture the user initiated. Locked in at the moment Fn goes down
-/// and held for the matching Fn-up so the AppDelegate knows where to send
-/// the transcript when recording ends.
+/// Which gesture the user initiated. The active trigger is updated live
+/// while Fn is held — if the user adds Ctrl mid-press, the trigger
+/// upgrades to `.insert`; if they release Ctrl while keeping Fn, it
+/// downgrades to `.dictate`. The value at the moment Fn is released is
+/// what AppDelegate uses.
 enum HotkeyTrigger: Equatable {
     /// Plain Fn — transcript goes into the pill UI.
     case dictate
@@ -36,11 +38,10 @@ enum HotkeyMode: String, CaseIterable, Identifiable {
     }
 }
 
-/// Detects the Fn (globe) key via a CGEvent tap filtered to keycode 63
-/// (`kVK_Function`) — the physical Fn key, not the broader "function" mask
-/// that fires for arrow keys / F1-F12 / page nav. Also reads whether
-/// Control is held at the moment Fn engages so AppDelegate can choose
-/// between the pill (Fn alone) and paste-into-input (Fn + Ctrl).
+/// Detects the Fn (globe) key via a CGEvent tap. Watches *all* flagsChanged
+/// events (not just keycode 63) so Ctrl transitions during a held Fn
+/// session can flip the trigger between `.dictate` and `.insert` in real
+/// time. Requires Accessibility permission.
 @MainActor
 @Observable
 final class HotkeyManager {
@@ -61,10 +62,14 @@ final class HotkeyManager {
     @ObservationIgnored var onKeyDown: ((HotkeyTrigger) -> Void)?
     @ObservationIgnored var onKeyUp: ((HotkeyTrigger) -> Void)?
 
+    /// Live trigger value. Updated whenever Ctrl state changes during a
+    /// held Fn session. Observable so the panel could surface "paste mode"
+    /// in real time (future enhancement).
+    private(set) var currentTrigger: HotkeyTrigger = .dictate
+
     @ObservationIgnored private var eventTap: CFMachPort?
     @ObservationIgnored private var runLoopSource: CFRunLoopSource?
     @ObservationIgnored private var isHeld = false
-    @ObservationIgnored private var currentTrigger: HotkeyTrigger = .dictate
 
     init() {
         let stored = UserDefaults.standard.string(forKey: Self.modeDefaultsKey)
@@ -80,18 +85,24 @@ final class HotkeyManager {
             guard type == .flagsChanged, let info else {
                 return Unmanaged.passUnretained(event)
             }
-            // Filter to Fn key specifically (keycode 63) — arrow keys / F-keys
-            // also fire flagsChanged with maskSecondaryFn set.
+            // Look at EVERY flagsChanged event — not just keycode 63. Ctrl
+            // press/release events have keycodes 59 (left) or 62 (right);
+            // we need to see them so we can re-evaluate the trigger when
+            // the user adds Ctrl mid-Fn-hold.
+            let flags = event.flags
             let keycode = event.getIntegerValueField(.keyboardEventKeycode)
             // swiftlint:disable:next prefer_self_in_static_references
-            guard keycode == HotkeyManager.fnKeycode else {
-                return Unmanaged.passUnretained(event)
-            }
-            let flags = event.flags
-            let isDown = flags.contains(.maskSecondaryFn)
-            let trigger: HotkeyTrigger = flags.contains(.maskControl) ? .insert : .dictate
+            let isFnEvent = keycode == HotkeyManager.fnKeycode
+            let isFnDown = flags.contains(.maskSecondaryFn)
+            let isCtrlDown = flags.contains(.maskControl)
             let manager = Unmanaged<HotkeyManager>.fromOpaque(info).takeUnretainedValue()
-            Task { @MainActor in manager.notify(isDown: isDown, trigger: trigger) }
+            Task { @MainActor in
+                manager.update(
+                    isFnEvent: isFnEvent,
+                    fnDown: isFnDown,
+                    ctrlDown: isCtrlDown
+                )
+            }
             return Unmanaged.passUnretained(event)
         }
 
@@ -118,16 +129,33 @@ final class HotkeyManager {
         Self.logger.info("Fn event tap installed")
     }
 
-    private func notify(isDown: Bool, trigger: HotkeyTrigger) {
-        if isDown, !isHeld {
-            // Lock in the trigger mode at the moment Fn engages. The matching
-            // Fn-up will see the same mode even if the user releases Ctrl
-            // mid-gesture.
-            currentTrigger = trigger
+    private func update(isFnEvent: Bool, fnDown: Bool, ctrlDown: Bool) {
+        // Live-update trigger while Fn is held (hold mode only — toggle mode
+        // locks in at the first tap so the user doesn't have to keep keys
+        // pressed during the whole recording).
+        if isHeld, mode == .hold {
+            let newTrigger: HotkeyTrigger = ctrlDown ? .insert : .dictate
+            if newTrigger != currentTrigger {
+                Self.logger.debug(
+                    "Trigger live update: \(String(describing: newTrigger), privacy: .public)"
+                )
+                currentTrigger = newTrigger
+            }
+        }
+
+        // Only Fn key transitions start/stop a session.
+        guard isFnEvent else { return }
+
+        if fnDown, !isHeld {
             isHeld = true
-            onKeyDown?(trigger)
-        } else if !isDown, isHeld {
+            currentTrigger = ctrlDown ? .insert : .dictate
+            let triggerDesc = String(describing: currentTrigger)
+            Self.logger.debug("Fn down (trigger: \(triggerDesc, privacy: .public))")
+            onKeyDown?(currentTrigger)
+        } else if !fnDown, isHeld {
             isHeld = false
+            let triggerDesc = String(describing: currentTrigger)
+            Self.logger.debug("Fn up (trigger: \(triggerDesc, privacy: .public))")
             onKeyUp?(currentTrigger)
         }
     }

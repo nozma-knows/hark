@@ -52,10 +52,12 @@ export async function polishTranscript(
   // and emits the cleaned version.
   let polished = "";
   let usage: PolishTranscriptResult["usage"];
+  const claudeBinary = process.env.HARK_CLAUDE_BINARY;
   for await (const message of query({
     prompt: `${SYSTEM_PROMPT}\n\nRaw dictation:\n${text}`,
     options: {
       maxTurns: 1,
+      ...(claudeBinary ? { pathToClaudeCodeExecutable: claudeBinary } : {}),
     },
   }) as AsyncIterable<SDKMessage>) {
     if (message.type === "result" && message.subtype === "success") {

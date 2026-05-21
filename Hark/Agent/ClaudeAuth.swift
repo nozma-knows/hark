@@ -83,6 +83,14 @@ final class ClaudeAuth {
         if env["HOME"] == nil, let home = FileManager.default.urls(for: .userDirectory, in: .userDomainMask).first {
             env["HOME"] = home.path
         }
+        // The Agent SDK ships an optional ~200 MB native `claude` binary that
+        // `bun build --compile` doesn't include in our single-binary build.
+        // Surfacing the user's locally-installed `claude` here lets the
+        // sidecar pass it as `pathToClaudeCodeExecutable` to the SDK,
+        // avoiding the "Native CLI binary for darwin-arm64 not found" error.
+        if let path = claudeBinaryPath {
+            env["HARK_CLAUDE_BINARY"] = path
+        }
         return env
     }
 

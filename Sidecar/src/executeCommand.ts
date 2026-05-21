@@ -71,11 +71,17 @@ export async function executeCommand(raw: unknown): Promise<ExecuteCommandResult
   let succeeded = false;
   let usage: ExecuteCommandResult["usage"];
 
+  // Tell the SDK where the user's locally-installed claude binary lives
+  // (we don't bundle the SDK's optional 200 MB native binary in the
+  // bun-compiled sidecar). HARK_CLAUDE_BINARY is set by ClaudeAuth.
+  const claudeBinary = process.env.HARK_CLAUDE_BINARY;
+
   for await (const message of query({
     prompt: `${SYSTEM_PROMPT}\n\nVoice command: ${transcript}`,
     options: {
       maxTurns: 6,
       allowedTools: ["Bash"],
+      ...(claudeBinary ? { pathToClaudeCodeExecutable: claudeBinary } : {}),
     },
   }) as AsyncIterable<SDKMessage>) {
     if (message.type === "result") {

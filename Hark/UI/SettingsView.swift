@@ -103,7 +103,7 @@ private struct ClaudePane: View {
 
             if !auth.method.isResolved {
                 Section("Get set up") {
-                    if let path = auth.claudeBinaryPath {
+                    if auth.claudeBinaryPath != nil {
                         Button("Generate OAuth token in Terminal") {
                             auth.runSetupToken()
                         }
@@ -277,7 +277,7 @@ private struct ModelRow: View {
 
     private var isBusy: Bool {
         switch transcriber.state {
-        case let .downloading(m, _), let .loading(m), let .transcribing(m):
+        case let .downloading(m, _), let .loading(m), let .recording(m):
             m == model
         default:
             false

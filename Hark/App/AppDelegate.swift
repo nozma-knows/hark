@@ -8,7 +8,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let appState: AppState
     let permissions: PermissionsManager
     let hotkey: HotkeyManager
-    let recorder: AudioRecorder
     let transcriber: Transcriber
     let claudeAuth: ClaudeAuth
     let sidecar: AgentSidecar
@@ -19,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let state = AppState()
         let perms = PermissionsManager()
         let hotkeyManager = HotkeyManager()
-        let audioRecorder = AudioRecorder()
         let transcriberInstance = Transcriber()
         let claudeAuthInstance = ClaudeAuth()
         let sidecarInstance = AgentSidecar(
@@ -30,13 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState = state
         permissions = perms
         hotkey = hotkeyManager
-        recorder = audioRecorder
         transcriber = transcriberInstance
         claudeAuth = claudeAuthInstance
         sidecar = sidecarInstance
         panelController = PanelWindowController(
             appState: state,
-            recorder: audioRecorder,
             transcriber: transcriberInstance
         )
         onboardingController = OnboardingWindowController(
@@ -89,45 +85,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard ensureReady() else { return }
         switch hotkey.mode {
         case .hold:
-            startRecording()
+            startStream()
         case .toggle:
-            if recorder.state == .recording {
-                stopRecording()
+            if isStreaming {
+                stopStream()
             } else {
-                startRecording()
+                startStream()
             }
         }
     }
 
     private func handleHotkeyUp() {
-        guard hotkey.mode == .hold, recorder.state == .recording else { return }
-        stopRecording()
+        guard hotkey.mode == .hold, isStreaming else { return }
+        stopStream()
     }
 
-    private func startRecording() {
+    private var isStreaming: Bool {
+        if case .recording = transcriber.state { return true }
+        return false
+    }
+
+    private func startStream() {
         appState.transcript = nil
-        do {
-            try recorder.start()
-            appState.isPanelVisible = true
-        } catch {
-            Self.logger.error("Failed to start recording: \(String(describing: error), privacy: .public)")
-        }
-    }
-
-    private func stopRecording() {
-        let samples = recorder.stop()
-        guard !samples.isEmpty else { return }
+        appState.isPanelVisible = true
         Task { [weak self] in
-            await self?.transcribeAndShow(samples)
+            guard let self else { return }
+            do {
+                try await transcriber.startStream()
+            } catch {
+                Self.logger.error("Failed to start stream: \(String(describing: error), privacy: .public)")
+            }
         }
     }
 
-    private func transcribeAndShow(_ samples: [Float]) async {
-        do {
-            let text = try await transcriber.transcribe(samples: samples)
+    private func stopStream() {
+        Task { [weak self] in
+            guard let self else { return }
+            let text = await transcriber.stopStream()
             appState.transcript = text.isEmpty ? nil : text
-        } catch {
-            Self.logger.error("Transcribe failed: \(String(describing: error), privacy: .public)")
         }
     }
 

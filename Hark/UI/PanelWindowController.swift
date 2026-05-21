@@ -18,15 +18,13 @@ final class PanelWindowController: NSObject {
     private static let escKeyCode: UInt16 = 53
 
     private let appState: AppState
-    private let recorder: AudioRecorder
     private let transcriber: Transcriber
     private var panel: NSPanel?
     private var globalEscMonitor: Any?
     private var localEscMonitor: Any?
 
-    init(appState: AppState, recorder: AudioRecorder, transcriber: Transcriber) {
+    init(appState: AppState, transcriber: Transcriber) {
         self.appState = appState
-        self.recorder = recorder
         self.transcriber = transcriber
         super.init()
         observeVisibility()
@@ -97,7 +95,6 @@ final class PanelWindowController: NSObject {
         let host = NSHostingView(
             rootView: PanelRootView(
                 appState: appState,
-                recorder: recorder,
                 transcriber: transcriber
             )
         )
@@ -157,7 +154,7 @@ final class PanelWindowController: NSObject {
     private func handleEscape() {
         // Don't dismiss mid-recording — the hotkey-release path is the right
         // way to stop a hold-to-talk session, and we'd lose the audio.
-        if recorder.state == .recording { return }
+        if case .recording = transcriber.state { return }
         appState.transcript = nil
         appState.isPanelVisible = false
     }

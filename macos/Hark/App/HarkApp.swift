@@ -16,11 +16,18 @@ struct HarkApp: App {
             )
         } label: {
             // Template image — system tints to match the menu bar appearance
-            // (black on light menu bar, white on dark). `resizable + frame`
-            // is required: the source asset is 1024×1024; without an
-            // explicit size the menu bar refuses to render it.
+            // (black on light menu bars, white on dark). All three modifiers
+            // are required:
+            //   `.resizable()` + `.frame(18×18)`: source asset is 1024×1024;
+            //       MenuBarExtra refuses to render unconstrained images.
+            //   `.renderingMode(.template)`: the asset catalog's
+            //       template-rendering-intent isn't always honored by
+            //       SwiftUI on macOS — without an explicit override the
+            //       image loads as full-color black on transparent, which
+            //       is invisible against the macOS menu bar's dark blur.
             Image("BrandMark")
                 .resizable()
+                .renderingMode(.template)
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 18, height: 18)
                 .accessibilityLabel("Hark")

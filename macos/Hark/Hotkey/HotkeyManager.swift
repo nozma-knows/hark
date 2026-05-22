@@ -83,6 +83,21 @@ final class HotkeyManager {
         installEventTap()
     }
 
+    /// True once the CGEvent tap has been successfully installed. False when
+    /// `tapCreate` returned nil — typically because Accessibility hadn't been
+    /// granted yet at launch.
+    var isTapInstalled: Bool { eventTap != nil }
+
+    /// Re-attempt event-tap installation. Idempotent — no-op once the tap is
+    /// live. Call this whenever the Accessibility grant state may have just
+    /// flipped (e.g., on NSApplication.didBecomeActiveNotification after the
+    /// user grants the permission in System Settings) so the user doesn't
+    /// have to relaunch Hark just to get the global hotkey working.
+    func installIfNeeded() {
+        guard eventTap == nil else { return }
+        installEventTap()
+    }
+
     private func installEventTap() {
         let mask: CGEventMask = 1 << CGEventType.flagsChanged.rawValue
         let userInfo = Unmanaged.passUnretained(self).toOpaque()

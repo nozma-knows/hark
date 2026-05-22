@@ -86,9 +86,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [weak self] _ in
             // Permissions and Claude auth can flip silently while the user is
             // in System Settings / Terminal; re-poll on foreground return.
+            // Also retry installing the global-hotkey event tap if it failed
+            // at launch because Accessibility hadn't been granted yet —
+            // saves the user from needing to manually relaunch Hark.
             MainActor.assumeIsolated {
                 self?.permissions.refresh()
                 self?.claudeAuth.refresh()
+                self?.hotkey.installIfNeeded()
             }
         }
 

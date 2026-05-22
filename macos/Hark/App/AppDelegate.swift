@@ -112,16 +112,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleHotkeyDown(_ trigger: HotkeyTrigger) {
         guard ensureReady() else { return }
-        switch hotkey.mode {
-        case .hold:
-            startRecording(trigger: trigger)
-        case .toggle:
-            if recorder.state == .recording {
-                stopRecording()
-            } else {
-                startRecording(trigger: trigger)
-            }
+        // Any Fn-press while a recording is in progress stops it — regardless
+        // of whether the recording was started via hotkey or pill click, and
+        // regardless of hold/toggle mode. Without this branch, HOLD mode tries
+        // to start a SECOND recording (which silently fails inside
+        // AudioRecorder) and the existing one becomes unstoppable from the
+        // keyboard.
+        if recorder.state == .recording {
+            stopRecording()
+            return
         }
+        startRecording(trigger: trigger)
     }
 
     private func handleHotkeyUp(_: HotkeyTrigger) {

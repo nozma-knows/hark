@@ -6,6 +6,22 @@ struct HarkApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self)
     private var delegate
 
+    /// Hand-sized 18×18 template image for the MenuBarExtra label.
+    ///
+    /// MenuBarExtra ignores SwiftUI's .resizable()/.frame() modifiers on its
+    /// label image and uses the source asset's natural size — for our 1024×1024
+    /// BrandMark, that produces a 1040-point-wide status item that sits
+    /// off-screen at X=-57 and looks like the icon is "missing." Setting
+    /// `.size` directly on a copy of the NSImage (and marking it as template
+    /// here so it tints with the menu bar appearance) is the only way to
+    /// constrain the rendered dimensions.
+    private static let menuBarIcon: NSImage = {
+        let img = (NSImage(named: "BrandMark")?.copy() as? NSImage) ?? NSImage()
+        img.size = NSSize(width: 18, height: 18)
+        img.isTemplate = true
+        return img
+    }()
+
     var body: some Scene {
         MenuBarExtra {
             HarkMenu(
@@ -15,21 +31,7 @@ struct HarkApp: App {
                 onShowWelcome: { delegate.onboardingController.show() }
             )
         } label: {
-            // Template image — system tints to match the menu bar appearance
-            // (black on light menu bars, white on dark). All three modifiers
-            // are required:
-            //   `.resizable()` + `.frame(18×18)`: source asset is 1024×1024;
-            //       MenuBarExtra refuses to render unconstrained images.
-            //   `.renderingMode(.template)`: the asset catalog's
-            //       template-rendering-intent isn't always honored by
-            //       SwiftUI on macOS — without an explicit override the
-            //       image loads as full-color black on transparent, which
-            //       is invisible against the macOS menu bar's dark blur.
-            Image("BrandMark")
-                .resizable()
-                .renderingMode(.template)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 18, height: 18)
+            Image(nsImage: Self.menuBarIcon)
                 .accessibilityLabel("Hark")
         }
         .menuBarExtraStyle(.menu)

@@ -59,6 +59,13 @@ final class PanelWindowController: NSObject {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false // SwiftUI Capsule provides its own shadow
+        // Pill background is hardcoded to black (.black.opacity(0.82)), so
+        // pin the panel's appearance to dark — otherwise SwiftUI's semantic
+        // colors (.primary, .secondary, .tint, ...) resolve based on the
+        // user's system Appearance setting, and Light-Mode Macs end up with
+        // dark-gray text on a dark-gray pill (illegible). Forcing .darkAqua
+        // here makes every machine render the pill identically.
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
         panel.standardWindowButton(.closeButton)?.isHidden = true

@@ -28,7 +28,7 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     # Defaults for CFBundleShortVersionString + CFBundleVersion. Override at
     # release time via release.sh's `MARKETING_VERSION="${VERSION}"` xcodebuild arg.
-    MARKETING_VERSION: "0.1.2"
+    MARKETING_VERSION: "0.1.3"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
@@ -84,6 +84,24 @@ targets:
         outputFiles:
           - $(SRCROOT)/Hark/Resources/Sidecar/hark-sidecar
         basedOnDependencyAnalysis: true
+    postBuildScripts:
+      # Force macOS to load the app icon from Assets.car (which contains the
+      # full 16…1024 size matrix) instead of falling back to AppIcon.icns
+      # (which actool auto-emits but only fills with 16/128 — when macOS reads
+      # it for medium/large display contexts, it upscales 128 → blurry + the
+      # OS adds its own squircle mask → "nested squircle" rendering bug).
+      - name: Strip legacy icon refs (Assets.car only)
+        runOnlyWhenInstalling: false
+        script: |
+          set -euo pipefail
+          INFO_PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          ICNS="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/AppIcon.icns"
+          if [ -f "${INFO_PLIST}" ]; then
+            plutil -remove CFBundleIconFile "${INFO_PLIST}" 2>/dev/null || true
+            plutil -remove CFBundleIconFiles "${INFO_PLIST}" 2>/dev/null || true
+          fi
+          rm -f "${ICNS}"
+          echo "icon: stripped CFBundleIconFile + AppIcon.icns; Assets.car is the sole source"
     info:
       path: Hark/Generated/Info.plist
       properties:

@@ -15,7 +15,10 @@ struct HarkApp: App {
                 onShowWelcome: { delegate.onboardingController.show() }
             )
         } label: {
-            Image(systemName: "waveform")
+            // Template image — system tints to match the menu bar appearance
+            // (black on light menu bar, white on dark). Matches every other
+            // status item, instead of the previous waveform glyph.
+            Image("BrandMark")
                 .accessibilityLabel("Hark")
         }
         .menuBarExtraStyle(.menu)

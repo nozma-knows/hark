@@ -36,9 +36,12 @@ struct OnboardingView: View {
 
     private var header: some View {
         VStack(spacing: 8) {
-            Image(systemName: "waveform")
-                .font(.system(size: 44, weight: .light))
+            Image("BrandMark")
+                .resizable()
+                .renderingMode(.template)
+                .aspectRatio(contentMode: .fit)
                 .foregroundStyle(.tint)
+                .frame(width: 56, height: 56)
             Text("Welcome to Hark")
                 .font(.title2.weight(.semibold))
             Text("Two macOS permissions plus Claude auth, then you're set.")

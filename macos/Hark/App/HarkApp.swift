@@ -16,9 +16,13 @@ struct HarkApp: App {
             )
         } label: {
             // Template image — system tints to match the menu bar appearance
-            // (black on light menu bar, white on dark). Matches every other
-            // status item, instead of the previous waveform glyph.
+            // (black on light menu bar, white on dark). `resizable + frame`
+            // is required: the source asset is 1024×1024; without an
+            // explicit size the menu bar refuses to render it.
             Image("BrandMark")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 18, height: 18)
                 .accessibilityLabel("Hark")
         }
         .menuBarExtraStyle(.menu)

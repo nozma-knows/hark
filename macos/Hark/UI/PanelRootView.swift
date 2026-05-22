@@ -104,8 +104,17 @@ private struct IdlePill: View {
     private static let expandedWidth: CGFloat = 168
     private static let expandedHeight: CGFloat = 26
 
+    // Small invisible margin around the idle pill so a cursor moving down the
+    // screen can actually catch it — a 40×3 capsule is too thin to hit
+    // reliably. When hovered, no margin: the hit area follows the expanded
+    // pill exactly (no oversized invisible hover zone).
+    private static let idleHoverPadH: CGFloat = 12
+    private static let idleHoverPadV: CGFloat = 10
+
     private var pillWidth: CGFloat { isHovered ? Self.expandedWidth : Self.collapsedWidth }
     private var pillHeight: CGFloat { isHovered ? Self.expandedHeight : Self.collapsedHeight }
+    private var hitPadH: CGFloat { isHovered ? 0 : Self.idleHoverPadH }
+    private var hitPadV: CGFloat { isHovered ? 0 : Self.idleHoverPadV }
 
     var body: some View {
         // Hit-test area matches the visible pill (no oversized invisible
@@ -154,7 +163,11 @@ private struct IdlePill: View {
             .allowsHitTesting(isHovered)
         }
         .frame(width: pillWidth, height: pillHeight)
-        .contentShape(Capsule(style: .continuous))
+        // Invisible hover-margin around the idle pill (drops to 0 on hover so
+        // the cursor-leaves-the-pill behavior matches the visible bounds).
+        .padding(.horizontal, hitPadH)
+        .padding(.vertical, hitPadV)
+        .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
         }

@@ -21,12 +21,24 @@ final class PanelWindowController: NSObject {
     private let appState: AppState
     private let recorder: AudioRecorder
     private let transcriber: Transcriber
+    /// Mutable so AppDelegate can swap in real closures after super.init().
+    /// The closure values are forwarded to PanelRootView via NSHostingView's
+    /// rootView, which is rebuilt only on first panel creation — so the
+    /// initial reference here must be the final one. Setting `actions` after
+    /// `showAlways()` has no effect.
+    var actions: PanelActions
     private var panel: NSPanel?
 
-    init(appState: AppState, recorder: AudioRecorder, transcriber: Transcriber) {
+    init(
+        appState: AppState,
+        recorder: AudioRecorder,
+        transcriber: Transcriber,
+        actions: PanelActions
+    ) {
         self.appState = appState
         self.recorder = recorder
         self.transcriber = transcriber
+        self.actions = actions
         super.init()
     }
 
@@ -85,7 +97,8 @@ final class PanelWindowController: NSObject {
             rootView: PanelRootView(
                 appState: appState,
                 recorder: recorder,
-                transcriber: transcriber
+                transcriber: transcriber,
+                actions: actions
             )
         )
         host.wantsLayer = true

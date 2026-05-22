@@ -42,10 +42,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         transcriber = transcriberInstance
         claudeAuth = claudeAuthInstance
         sidecar = sidecarInstance
+        // Construct AppDelegate first, then wire the panel actions in
+        // applicationDidFinishLaunching (closures need `self`, which we can't
+        // capture before super.init()).
         panelController = PanelWindowController(
             appState: state,
             recorder: audioRecorder,
-            transcriber: transcriberInstance
+            transcriber: transcriberInstance,
+            actions: PanelActions(toggleRecording: { _ in /* wired below */ })
         )
         onboardingController = OnboardingWindowController(
             permissions: perms,
@@ -55,9 +59,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         hotkey.onKeyDown = { [weak self] trigger in self?.handleHotkeyDown(trigger) }
         hotkey.onKeyUp = { [weak self] trigger in self?.handleHotkeyUp(trigger) }
+        panelController.actions = PanelActions(
+            toggleRecording: { [weak self] trigger in self?.togglePanelRecording(trigger) }
+        )
     }
 
     @ObservationIgnored private var activeTrigger: HotkeyTrigger = .dictate
+    /// Set when the pill UI (record button or menu item) initiates a recording;
+    /// nil for hotkey-driven recordings. Read on stop to decide which trigger
+    /// the finalize step should use.
+    @ObservationIgnored private var manualRecordingTrigger: HotkeyTrigger?
 
     func applicationDidFinishLaunching(_: Notification) {
         // Hark is a regular dock app (Wispr Flow-style). LSUIElement is
@@ -115,7 +126,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleHotkeyUp(_: HotkeyTrigger) {
         guard hotkey.mode == .hold, recorder.state == .recording else { return }
+        // Don't stop a recording the pill explicitly started — the user must
+        // click the record button to end it.
+        guard manualRecordingTrigger == nil else { return }
         stopRecording()
+    }
+
+    /// Pill UI entry point: click-to-toggle recording. The selected mode
+    /// (.dictate / .insert / .command) is preserved through the finalize
+    /// step, regardless of which Fn modifiers happen to be down.
+    func togglePanelRecording(_ trigger: HotkeyTrigger) {
+        guard ensureReady() else { return }
+        if recorder.state == .recording {
+            stopRecording()
+        } else {
+            manualRecordingTrigger = trigger
+            startRecording(trigger: trigger)
+        }
     }
 
     private func startRecording(trigger: HotkeyTrigger) {
@@ -132,10 +159,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func stopRecording() {
         let samples = recorder.stop()
         guard !samples.isEmpty else { return }
-        // Use the LIVE trigger at the moment Fn is released — not the locked-in
-        // value from Fn-down. This lets the user add/remove Ctrl mid-press and
-        // the resulting action matches what they were holding when they let go.
-        let trigger = hotkey.currentTrigger
+        // For pill-initiated recordings, use the trigger that was selected at
+        // start (the user explicitly chose Execute / Fill input / dictate via
+        // the UI). For hotkey-driven recordings, use the LIVE trigger at
+        // release time — lets the user add/remove Ctrl mid-press and the
+        // resulting action matches what they were holding when they let go.
+        let trigger = manualRecordingTrigger ?? hotkey.currentTrigger
+        manualRecordingTrigger = nil
         Self.logger.info("stopRecording with trigger: \(String(describing: trigger), privacy: .public)")
         Task { [weak self] in
             await self?.finalizeTranscript(samples, trigger: trigger)

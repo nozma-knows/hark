@@ -4,8 +4,9 @@ import SwiftUI
 private let panelLogger = Logger(subsystem: "co.milbo.hark", category: "Panel")
 
 /// Wispr Flow-style pill UI at the bottom-center of the screen.
-/// - Idle: tiny capsule outline, barely visible (~80×4)
-/// - Idle + hover: expands to show the hotkey hint
+/// - Idle: barely-there capsule outline (~40×3); hover hit area matches.
+/// - Idle + hover: expands to a compact strip with the three shortcut chips
+///   (Fn, ⌃Fn, ⇧Fn) and a settings gear — no text labels, no dividers.
 /// - Recording: pulsing red dot + duration + mini bars
 /// - Transcribing / loading: spinner + label
 /// - Transcript ready: text + copy + dismiss
@@ -98,78 +99,66 @@ struct PanelRootView: View {
 private struct IdlePill: View {
     @State private var isHovered = false
 
-    private static let collapsedWidth: CGFloat = 72
-    private static let collapsedHeight: CGFloat = 5
-    private static let expandedWidth: CGFloat = 360
-    private static let expandedHeight: CGFloat = 32
+    private static let collapsedWidth: CGFloat = 40
+    private static let collapsedHeight: CGFloat = 3
+    private static let expandedWidth: CGFloat = 168
+    private static let expandedHeight: CGFloat = 26
 
     private var pillWidth: CGFloat { isHovered ? Self.expandedWidth : Self.collapsedWidth }
     private var pillHeight: CGFloat { isHovered ? Self.expandedHeight : Self.collapsedHeight }
 
     var body: some View {
-        // Stable outer hit-test area — never resizes, so hover doesn't
-        // flicker when the inner pill grows / shrinks past the cursor.
+        // Hit-test area matches the visible pill (no oversized invisible
+        // hover zone). When hovered, the pill — and therefore the hit area
+        // — grows; the cursor that triggered the hover is inside the small
+        // shape AND the larger shape, so the state sticks while the user
+        // moves toward the chips/gear.
         ZStack {
-            Color.clear
-                .contentShape(Rectangle())
+            // Background fades in
+            Capsule(style: .continuous)
+                .fill(.black.opacity(isHovered ? 0.82 : 0))
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(.white.opacity(isHovered ? 0.1 : 0), lineWidth: 0.5)
+                )
+                .shadow(color: .black.opacity(isHovered ? 0.45 : 0), radius: 10, y: 3)
 
-            ZStack {
-                // Background fades in
-                Capsule(style: .continuous)
-                    .fill(.black.opacity(isHovered ? 0.82 : 0))
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .stroke(.white.opacity(isHovered ? 0.1 : 0), lineWidth: 0.5)
-                    )
-                    .shadow(color: .black.opacity(isHovered ? 0.45 : 0), radius: 10, y: 3)
+            // Outline fades out — the only thing visible at rest.
+            Capsule(style: .continuous)
+                .stroke(.white.opacity(isHovered ? 0 : 0.35), lineWidth: 1)
 
-                // Outline fades out
-                Capsule(style: .continuous)
-                    .stroke(.white.opacity(isHovered ? 0 : 0.35), lineWidth: 1)
-
-                HStack(spacing: 6) {
-                    ShortcutChip(label: "Fn")
-                    Text("dictate")
-                        .font(.system(size: 10, weight: .medium))
+            // Hover content: three shortcut chips + settings gear, nothing
+            // else. Action labels (dictate/paste/command) and dividers
+            // intentionally removed — the chips alone communicate the
+            // shortcut, and a smaller pill reads cleaner over wallpaper.
+            HStack(spacing: 6) {
+                ShortcutChip(label: "Fn")
+                ShortcutChip(label: "⌃Fn")
+                ShortcutChip(label: "⇧Fn")
+                Spacer(minLength: 4)
+                // SwiftUI's runtime requires `SettingsLink` for opening the
+                // Settings scene on macOS 14+; sendAction(showSettingsWindow:)
+                // was removed.
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(.secondary)
-                    Divider().frame(height: 12)
-                    ShortcutChip(label: "⌃Fn")
-                    Text("paste")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Divider().frame(height: 12)
-                    ShortcutChip(label: "⇧Fn")
-                    Text("command")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 4)
-                    // SwiftUI's runtime explicitly requires `SettingsLink`
-                    // for opening the Settings scene on macOS 14+. Action
-                    // selectors (`showSettingsWindow:` / `showPreferencesWindow:`)
-                    // were removed; NSApp.sendAction returns false. The
-                    // SettingsLink view routes the click through SwiftUI's
-                    // internal Scene plumbing — works even from an NSHostingView.
-                    SettingsLink {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Settings")
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 14)
-                .opacity(isHovered ? 1 : 0)
-                .allowsHitTesting(isHovered)
+                .buttonStyle(.plain)
+                .help("Settings")
             }
-            .frame(width: pillWidth, height: pillHeight)
+            .padding(.horizontal, 8)
+            .opacity(isHovered ? 1 : 0)
+            .allowsHitTesting(isHovered)
         }
-        .frame(width: Self.expandedWidth + 40, height: 48)
-        .animation(.easeInOut(duration: 0.28), value: isHovered)
+        .frame(width: pillWidth, height: pillHeight)
+        .contentShape(Capsule(style: .continuous))
         .onHover { hovering in
             isHovered = hovering
         }
+        .animation(.easeInOut(duration: 0.22), value: isHovered)
     }
 }
 

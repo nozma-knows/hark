@@ -84,15 +84,20 @@ elif ! command -v aws >/dev/null 2>&1; then
     UPLOADED=false
 else
     ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+    # Versioned URL is immutable — long cache is correct.
     aws s3 cp "${DMG}" "s3://${R2_BUCKET_NAME}/Hark-${VERSION}.dmg" \
         --profile "${R2_PROFILE}" \
         --endpoint-url "${ENDPOINT}" \
-        --content-type "application/x-apple-diskimage"
-    # `latest.dmg` is a stable URL the landing page links to.
+        --content-type "application/x-apple-diskimage" \
+        --cache-control "public, max-age=31536000, immutable"
+    # `latest.dmg` is the stable URL the landing page + Sparkle link to. It
+    # MUST NOT be cached aggressively — otherwise Cloudflare edge nodes hold
+    # an old DMG long after a new release ships (this bit us on 0.1.1).
     aws s3 cp "${DMG}" "s3://${R2_BUCKET_NAME}/latest.dmg" \
         --profile "${R2_PROFILE}" \
         --endpoint-url "${ENDPOINT}" \
-        --content-type "application/x-apple-diskimage"
+        --content-type "application/x-apple-diskimage" \
+        --cache-control "no-cache, max-age=0, must-revalidate"
     UPLOADED=true
 fi
 

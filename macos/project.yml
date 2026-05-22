@@ -26,6 +26,10 @@ settings:
   base:
     SWIFT_VERSION: "5.10"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
+    # Defaults for CFBundleShortVersionString + CFBundleVersion. Override at
+    # release time via release.sh's `MARKETING_VERSION="${VERSION}"` xcodebuild arg.
+    MARKETING_VERSION: "0.1.1"
+    CURRENT_PROJECT_VERSION: "1"
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
     GCC_TREAT_WARNINGS_AS_ERRORS: NO
@@ -85,8 +89,11 @@ targets:
       properties:
         CFBundleName: Hark
         CFBundleDisplayName: Hark
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        # Tracks MARKETING_VERSION so release.sh's CLI override propagates
+        # into Info.plist (Cmd+About, Spotlight, Sparkle appcast comparisons).
+        # MARKETING_VERSION has a sensible default in settings.base below.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleExecutable: $(EXECUTABLE_NAME)
         CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
         CFBundleInfoDictionaryVersion: "6.0"

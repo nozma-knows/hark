@@ -60,10 +60,16 @@ if command -v create-dmg >/dev/null 2>&1; then
         --hdiutil-quiet \
         "${DMG}" "${APP}"
 else
-    # Fallback: plain compressed disk image. Works fine, just no styling.
-    # `brew install create-dmg` upgrades to a polished drag-to-Applications layout.
+    # Fallback: hdiutil-only DMG with /Applications symlink so users have an
+    # obvious drag target. `brew install create-dmg` would also give us
+    # background image + icon positioning, but the symlink alone covers the
+    # critical UX (Hark.app and "Applications" side by side in one window).
+    STAGE="$(mktemp -d -t hark-dmg-stage)"
+    cp -R "${APP}" "${STAGE}/Hark.app"
+    ln -s /Applications "${STAGE}/Applications"
     hdiutil create -format UDZO -volname "Hark ${VERSION}" \
-        -srcfolder "${APP}" "${DMG}"
+        -srcfolder "${STAGE}" "${DMG}"
+    rm -rf "${STAGE}"
 fi
 
 DMG_BYTES=$(stat -f%z "${DMG}" 2>/dev/null || stat -c%s "${DMG}")

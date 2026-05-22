@@ -13,7 +13,10 @@ import SwiftUI
 final class PanelWindowController: NSObject {
     private static let panelHeight: CGFloat = 72
     private static let panelWidth: CGFloat = 680
-    private static let bottomInset: CGFloat = 0
+    /// Vertical distance between the panel and the top of the Dock. Anything
+    /// smaller and the pill visually rides the Dock edge (and users hover
+    /// through Dock items trying to reach it).
+    private static let bottomInset: CGFloat = 22
 
     private let appState: AppState
     private let recorder: AudioRecorder

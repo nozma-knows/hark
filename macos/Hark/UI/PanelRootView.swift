@@ -158,7 +158,11 @@ private struct IdlePill: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .animation(.easeInOut(duration: 0.22), value: isHovered)
+        // Spring motion (vs ease-in-out) gives the pill a "live" feel as it
+        // grows / collapses — the geometry change from 40×3 to 168×26 is
+        // dramatic, and spring damping smooths the aspect-ratio transition
+        // so the capsule corner radius interpolates without visual snap.
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isHovered)
     }
 }
 

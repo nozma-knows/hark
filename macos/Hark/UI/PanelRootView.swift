@@ -94,34 +94,27 @@ struct PanelRootView: View {
     }
 }
 
-// MARK: - Idle (smooth morphing pill — outline at rest, full bar on hover)
+// MARK: - Idle (visible pill grows from the center, inside a fixed hit-area)
 
 private struct IdlePill: View {
     @State private var isHovered = false
 
     private static let collapsedWidth: CGFloat = 40
     private static let collapsedHeight: CGFloat = 3
-    private static let expandedWidth: CGFloat = 168
-    private static let expandedHeight: CGFloat = 26
+    private static let expandedWidth: CGFloat = 132
+    private static let expandedHeight: CGFloat = 24
 
-    // Small invisible margin around the idle pill so a cursor moving down the
-    // screen can actually catch it — a 40×3 capsule is too thin to hit
-    // reliably. When hovered, no margin: the hit area follows the expanded
-    // pill exactly (no oversized invisible hover zone).
-    private static let idleHoverPadH: CGFloat = 12
-    private static let idleHoverPadV: CGFloat = 10
-
+    /// Outer hit-test frame is constant (matches the expanded pill bounds),
+    /// so the pill's visual center never shifts when growing/collapsing.
+    /// The visible capsule is centered inside this frame, anchored at the
+    /// frame's center — never the bottom. Without this, the pill grows
+    /// upward off its bottom edge and the cursor (which triggered hover at
+    /// the center of the small pill) ends up at the bottom of the expanded
+    /// pill, which feels like the pill is "running away" from the cursor.
     private var pillWidth: CGFloat { isHovered ? Self.expandedWidth : Self.collapsedWidth }
     private var pillHeight: CGFloat { isHovered ? Self.expandedHeight : Self.collapsedHeight }
-    private var hitPadH: CGFloat { isHovered ? 0 : Self.idleHoverPadH }
-    private var hitPadV: CGFloat { isHovered ? 0 : Self.idleHoverPadV }
 
     var body: some View {
-        // Hit-test area matches the visible pill (no oversized invisible
-        // hover zone). When hovered, the pill — and therefore the hit area
-        // — grows; the cursor that triggered the hover is inside the small
-        // shape AND the larger shape, so the state sticks while the user
-        // moves toward the chips/gear.
         ZStack {
             // Background fades in
             Capsule(style: .continuous)
@@ -136,21 +129,14 @@ private struct IdlePill: View {
             Capsule(style: .continuous)
                 .stroke(.white.opacity(isHovered ? 0 : 0.35), lineWidth: 1)
 
-            // Hover content: three shortcut chips + settings gear, nothing
-            // else. Action labels (dictate/paste/command) and dividers
-            // intentionally removed — the chips alone communicate the
-            // shortcut, and a smaller pill reads cleaner over wallpaper.
-            HStack(spacing: 6) {
-                ShortcutChip(label: "Fn")
-                ShortcutChip(label: "⌃Fn")
-                ShortcutChip(label: "⇧Fn")
-                Spacer(minLength: 4)
-                // SwiftUI's runtime requires `SettingsLink` for opening the
-                // Settings scene on macOS 14+; sendAction(showSettingsWindow:)
-                // was removed.
+            // Hover content: play button (with a chevron menu for execute /
+            // fill input) on the left, settings gear on the right.
+            HStack(spacing: 0) {
+                PlayMenu()
+                Spacer(minLength: 6)
                 SettingsLink {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                         .frame(width: 18, height: 18)
                         .contentShape(Rectangle())
@@ -163,19 +149,56 @@ private struct IdlePill: View {
             .allowsHitTesting(isHovered)
         }
         .frame(width: pillWidth, height: pillHeight)
-        // Invisible hover-margin around the idle pill (drops to 0 on hover so
-        // the cursor-leaves-the-pill behavior matches the visible bounds).
-        .padding(.horizontal, hitPadH)
-        .padding(.vertical, hitPadV)
+        // The outer frame stays constant — visible pill is centered inside it
+        // and grows from the center, so its visual position never shifts.
+        .frame(width: Self.expandedWidth, height: Self.expandedHeight)
         .contentShape(Rectangle())
         .onHover { hovering in
             isHovered = hovering
         }
-        // Spring motion (vs ease-in-out) gives the pill a "live" feel as it
-        // grows / collapses — the geometry change from 40×3 to 168×26 is
-        // dramatic, and spring damping smooths the aspect-ratio transition
-        // so the capsule corner radius interpolates without visual snap.
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isHovered)
+    }
+}
+
+/// Play button paired with a chevron that opens an action-mode menu
+/// ("Execute" / "Fill input").
+private struct PlayMenu: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Button {
+                // TODO: trigger the default action (dictate). Hooked up
+                // here so the play button does the same thing as a tap on
+                // the Fn hotkey when the rest of the pipeline is wired.
+            } label: {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Start")
+
+            Menu {
+                Button("Execute") {
+                    // TODO: trigger the .command flow (the ⇧Fn action).
+                }
+                Button("Fill input") {
+                    // TODO: trigger the .insert flow (the ⌃Fn action).
+                }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .heavy))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 12, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .background(Capsule(style: .continuous).fill(.white.opacity(0.12)))
+        .clipShape(Capsule(style: .continuous))
     }
 }
 

@@ -41,4 +41,18 @@ describe("chromeProfile.match", () => {
   test("declines non-open verbs", () => {
     expect(chromeProfile.match(normalize("close github.com in work profile"))).toBeNull();
   });
+
+  // MARK: - Filler word + compound verb variations
+
+  test("'open up X in Y profile' strips the 'up' filler", () => {
+    const a = chromeProfile.match(normalize("Open up github.com in my work profile"));
+    expect(a?.url).toBe("https://github.com");
+    expect(a?.profile.name).toBe("work");
+  });
+
+  test("'pull up X in Y profile' matches", () => {
+    const a = chromeProfile.match(normalize("Pull up github.com in personal profile"));
+    expect(a?.url).toBe("https://github.com");
+    expect(a?.profile.name).toBe("personal");
+  });
 });

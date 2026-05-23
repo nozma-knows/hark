@@ -21,8 +21,11 @@ interface ChromeProfileAction {
   readonly profile: ChromeProfile;
 }
 
-// "open <target> in (my )? <profile> profile"
-const PATTERN = /^(?:open|go to|navigate to|visit|browse to)\s+(.+?)\s+in\s+(?:my\s+)?(.+?)\s+profile\s*$/;
+// "open <target> in (my )? <profile> profile" — verb alternation
+// mirrors openUrl + openApp so "open up X in my work profile" or
+// "pull up X in personal profile" both match.
+const PATTERN =
+  /^(?:open|launch|go\s+to|navigate\s+to|visit|browse\s+to|pull\s+up)(?:\s+(?:up|the|a))?\s+(.+?)\s+in\s+(?:my\s+)?(.+?)\s+profile\s*$/;
 
 export const chromeProfile: Dispatcher<ChromeProfileAction> = {
   id: "chrome-profile",

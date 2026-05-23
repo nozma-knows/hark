@@ -19,7 +19,13 @@ interface OpenAppAction {
   readonly canonical: string;
 }
 
-const OPEN_APP_PATTERN = /^(?:open|launch|start)\s+(.+?)\s*(?:\s+app)?$/;
+// Verb alternation accepts the bare verbs plus "open up" / "fire up" /
+// "bring up" / "pull up" — all natural-sounding phrasings that voice
+// users routinely produce. The optional `(?:up|the|my|a)` after the
+// verb absorbs filler words ("open the Linear app", "open my email")
+// so they don't end up captured as part of the app name.
+const OPEN_APP_PATTERN =
+  /^(?:open|launch|start|fire\s+up|bring\s+up|pull\s+up)(?:\s+(?:up|the|my|a))?\s+(.+?)\s*(?:\s+app)?$/;
 
 export const openApp: Dispatcher<OpenAppAction> = {
   id: "open-app",

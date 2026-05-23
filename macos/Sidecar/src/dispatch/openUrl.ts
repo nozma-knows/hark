@@ -16,7 +16,11 @@ interface OpenUrlAction {
 }
 
 // Voice transcripts often render "." as "dot" — handle both shapes.
-const URL_OPENER = /^(?:open|go to|navigate to|visit|browse to)\s+(.+?)\s*$/;
+// Verb alternation mirrors openApp: bare verbs + compound forms +
+// optional filler words after the verb so "go to the news.ycombinator.com"
+// doesn't drag "the" into the URL.
+const URL_OPENER =
+  /^(?:open|go\s+to|navigate\s+to|visit|browse\s+to|pull\s+up)(?:\s+(?:up|the|a))?\s+(.+?)\s*$/;
 // Either an explicit scheme, OR a hostname.tld pattern, OR "word dot tld" voice phrasing.
 const URL_LIKE =
   /^(?:https?:\/\/[^\s]+|[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+(?:\/[^\s]*)?|[a-z0-9-]+(?:\s+dot\s+[a-z0-9-]+)+(?:\/[^\s]*)?)$/i;

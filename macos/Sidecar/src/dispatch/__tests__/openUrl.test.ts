@@ -48,4 +48,24 @@ describe("openUrl.match", () => {
   test("declines non-open verbs", () => {
     expect(openUrl.match(normalize("delete github.com"))).toBeNull();
   });
+
+  // MARK: - Filler word + compound verb variations
+
+  test("'open up <url>' strips the 'up' filler", () => {
+    expect(openUrl.match(normalize("Open up github.com"))?.url).toBe("https://github.com");
+  });
+
+  test("'go to the <site>' strips the 'the' filler", () => {
+    expect(openUrl.match(normalize("Go to the news.ycombinator.com"))?.url).toBe(
+      "https://news.ycombinator.com"
+    );
+  });
+
+  test("'pull up <url>' matches", () => {
+    expect(openUrl.match(normalize("Pull up github.com"))?.url).toBe("https://github.com");
+  });
+
+  test("politeness tails are stripped before matching", () => {
+    expect(openUrl.match(normalize("Open github.com please"))?.url).toBe("https://github.com");
+  });
 });

@@ -51,4 +51,31 @@ describe("openApp.match", () => {
     expect(openApp.match(normalize("Open Linear."))?.canonical).toBe("Linear");
     expect(openApp.match(normalize("  open   linear  "))?.canonical).toBe("Linear");
   });
+
+  // MARK: - Filler word + compound verb variations
+
+  test("'open up X' strips the 'up' filler", () => {
+    expect(openApp.match(normalize("Open up Linear"))?.canonical).toBe("Linear");
+    expect(openApp.match(normalize("open up chrome"))?.canonical).toBe("Google Chrome");
+  });
+
+  test("'open the X' / 'open the X app' strips the 'the' filler", () => {
+    expect(openApp.match(normalize("Open the Linear app"))?.canonical).toBe("Linear");
+    expect(openApp.match(normalize("Open the chrome"))?.canonical).toBe("Google Chrome");
+  });
+
+  test("'open my X' strips the 'my' filler", () => {
+    expect(openApp.match(normalize("Open my chrome"))?.canonical).toBe("Google Chrome");
+  });
+
+  test("'fire up X' / 'bring up X' / 'pull up X' all match", () => {
+    expect(openApp.match(normalize("Fire up Slack"))?.canonical).toBe("Slack");
+    expect(openApp.match(normalize("Bring up Linear"))?.canonical).toBe("Linear");
+    expect(openApp.match(normalize("Pull up Spotify"))?.canonical).toBe("Spotify");
+  });
+
+  test("politeness tails are stripped before matching", () => {
+    expect(openApp.match(normalize("Open Linear please"))?.canonical).toBe("Linear");
+    expect(openApp.match(normalize("Open up Linear, thanks."))?.canonical).toBe("Linear");
+  });
 });

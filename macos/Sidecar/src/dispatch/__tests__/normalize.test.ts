@@ -29,4 +29,22 @@ describe("normalize", () => {
     expect(normalize("")).toBe("");
     expect(normalize("   ")).toBe("");
   });
+
+  test("strips trailing politeness words", () => {
+    expect(normalize("Open Linear please")).toBe("open linear");
+    expect(normalize("Open Linear, please.")).toBe("open linear");
+    expect(normalize("Take a screenshot thanks")).toBe("take a screenshot");
+    expect(normalize("Open Linear thank you")).toBe("open linear");
+    expect(normalize("Take a screenshot for me")).toBe("take a screenshot");
+  });
+
+  test("strips multiple trailing politeness words", () => {
+    expect(normalize("Open Linear please thanks")).toBe("open linear");
+  });
+
+  test("doesn't strip 'please' / 'thanks' that aren't trailing", () => {
+    // The pattern is anchored to end-of-string so an interior occurrence
+    // (rare but possible) is left alone.
+    expect(normalize("Please open Linear")).toBe("please open linear");
+  });
 });

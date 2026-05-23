@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import IOKit.hid
 import Observation
 import OSLog
 
@@ -88,24 +89,86 @@ final class HotkeyManager {
     /// granted yet at launch.
     var isTapInstalled: Bool { eventTap != nil }
 
-    /// Re-attempt event-tap installation. Idempotent — no-op once the tap is
-    /// live. Call this whenever the Accessibility grant state may have just
-    /// flipped (e.g., on NSApplication.didBecomeActiveNotification after the
-    /// user grants the permission in System Settings) so the user doesn't
-    /// have to relaunch Hark just to get the global hotkey working.
+    /// Re-attempt event-tap installation, OR re-enable an existing tap that
+    /// macOS silently disabled. Both cases happen routinely:
+    ///   - First grant: Accessibility wasn't trusted at launch → tapCreate
+    ///     returned nil → no tap exists yet. Create one now.
+    ///   - Disable-by-timeout: macOS disables event taps whose callback runs
+    ///     too slowly (e.g., during a long-running synchronous operation on
+    ///     the main thread). The tap object still exists but receives no
+    ///     more events until we call `tapEnable(true)`.
+    /// Call on every didBecomeActive so a tap that died mid-session
+    /// auto-revives the next time the user focuses Hark.
     func installIfNeeded() {
-        guard eventTap == nil else { return }
+        if let tap = eventTap {
+            reEnableTap()
+            _ = tap
+            return
+        }
         installEventTap()
     }
 
+    /// Re-enable the currently-installed tap if macOS disabled it. Logs the
+    /// before/after state so we can confirm in the system log whether a
+    /// reported "Fn doesn't work" was caused by a disabled tap.
+    private func reEnableTap() {
+        guard let tap = eventTap else { return }
+        let wasEnabled = CGEvent.tapIsEnabled(tap: tap)
+        if !wasEnabled {
+            CGEvent.tapEnable(tap: tap, enable: true)
+            let nowEnabled = CGEvent.tapIsEnabled(tap: tap)
+            Self.logger.info("Fn event tap re-enable: \(wasEnabled) → \(nowEnabled)")
+        }
+    }
+
     private func installEventTap() {
+        // macOS Catalina+ requires BOTH Accessibility (to call tapCreate)
+        // AND Input Monitoring (to actually receive keyboard events). If
+        // Input Monitoring is missing, tapCreate happily returns a non-nil
+        // tap that never delivers a single event — the most common cause of
+        // "Fn doesn't work" reports. Log both so we can confirm the failure
+        // mode in `log show`, and call IOHIDRequestAccess so the user gets
+        // the system prompt the first time around.
+        let trusted = AXIsProcessTrusted()
+        let hidAccess = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
+        Self.logger.info("installEventTap: AXIsProcessTrusted=\(trusted), IOHIDCheckAccess=\(hidAccess.rawValue)")
+        if hidAccess != kIOHIDAccessTypeGranted {
+            // Fire-and-forget — the system will surface the prompt
+            // asynchronously; tap creation still proceeds so we're ready
+            // the moment the user grants.
+            _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+            Self.logger.info("installEventTap: requested Input Monitoring access")
+        }
+
         let mask: CGEventMask = 1 << CGEventType.flagsChanged.rawValue
         let userInfo = Unmanaged.passUnretained(self).toOpaque()
 
-        let callback: CGEventTapCallBack = { _, type, event, info in
+        let callback: CGEventTapCallBack = { proxy, type, event, info in
+            // Diagnostic: prove the callback is firing at all. If we don't
+            // see this log when the user presses Fn, the tap was created
+            // but isn't actually wired to receive events (likely silent
+            // permission denial).
+            // swiftlint:disable:next prefer_self_in_static_references
+            HotkeyManager.logger.info("tap cb: type=\(type.rawValue, privacy: .public)")
+
+            // macOS sends these synthetic event types when it has disabled
+            // our tap (slow callback, or user-initiated reset). Bounce the
+            // re-enable through MainActor so we don't read manager state
+            // off-thread — and so the recovery path is safe even if Swift's
+            // isolation checks tighten in future releases.
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let info {
+                    let manager = Unmanaged<HotkeyManager>.fromOpaque(info).takeUnretainedValue()
+                    Task { @MainActor in
+                        manager.reEnableTap()
+                    }
+                }
+                return Unmanaged.passUnretained(event)
+            }
             guard type == .flagsChanged, let info else {
                 return Unmanaged.passUnretained(event)
             }
+            _ = proxy
             // Look at EVERY flagsChanged event — not just keycode 63. Ctrl
             // press/release events have keycodes 59 (left) or 62 (right);
             // we need to see them so we can re-evaluate the trigger when
@@ -186,7 +249,10 @@ final class HotkeyManager {
     /// Modifier-to-trigger map. Shift wins over Ctrl if both are held — the
     /// reasoning is that ".command" is the more deliberate / rarer gesture,
     /// so a user who's holding both probably meant to engage it.
-    private static func resolveTrigger(ctrlDown: Bool, shiftDown: Bool) -> HotkeyTrigger {
+    /// `nonisolated` so the C-style CGEvent callback (which runs on the
+    /// tap thread) AND the unit tests (which run nonisolated) can both
+    /// call without needing to hop to MainActor.
+    nonisolated static func resolveTrigger(ctrlDown: Bool, shiftDown: Bool) -> HotkeyTrigger {
         if shiftDown { return .command }
         if ctrlDown { return .insert }
         return .dictate
@@ -194,7 +260,7 @@ final class HotkeyManager {
 
     /// Power ranking of triggers — used by the latch-upgrade rule so the
     /// gesture can only escalate (dictate → insert → command), never demote.
-    private static func priority(_ trigger: HotkeyTrigger) -> Int {
+    nonisolated static func priority(_ trigger: HotkeyTrigger) -> Int {
         switch trigger {
         case .dictate: 0
         case .insert: 1

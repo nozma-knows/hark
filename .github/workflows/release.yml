@@ -1,0 +1,140 @@
+name: Release
+
+# Triggered by pushing a tag like `v0.1.4`. The job builds, notarizes, and
+# uploads a release DMG using the same scripts/release.sh a developer uses
+# locally. Auto-update appcast is regenerated from the same DMG.
+#
+# Required GitHub Actions secrets (set under repo Settings → Secrets):
+#   MACOS_CERT_P12_BASE64       Developer ID Application cert exported as
+#                               .p12, base64-encoded.
+#   MACOS_CERT_PASSWORD         Password for the .p12.
+#   MACOS_KEYCHAIN_PASSWORD     Ephemeral keychain password (any string).
+#   APPLE_API_KEY_BASE64        App Store Connect API .p8 key, base64-encoded.
+#   APPLE_API_KEY_ID            Key ID from App Store Connect.
+#   APPLE_API_ISSUER_ID         Issuer ID from App Store Connect.
+#   SPARKLE_ED_PRIVATE_KEY      Sparkle EdDSA private key (output of
+#                               `generate_keys`). Used by generate_appcast
+#                               to sign the new DMG.
+#   R2_ACCOUNT_ID               Cloudflare account ID for the dl bucket.
+#   R2_ACCESS_KEY_ID            R2 access key (S3-compatible).
+#   R2_SECRET_ACCESS_KEY        R2 secret.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (no leading v)"
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    working-directory: macos
+
+jobs:
+  release:
+    name: Release ${{ github.ref_name }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Strip the leading `v` from a tag-based VERSION (v0.1.4 → 0.1.4)
+      # so MARKETING_VERSION matches CFBundleShortVersionString rules.
+      - name: Normalize version
+        run: |
+          VERSION="${VERSION#v}"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Building Hark v$VERSION"
+
+      - name: Install dependencies
+        run: brew install xcodegen create-dmg awscli sparkle
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Import signing certificate
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$CERT_P12" | base64 --decode > /tmp/cert.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import /tmp/cert.p12 -k build.keychain \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security list-keychains -d user -s build.keychain login.keychain-db
+          rm /tmp/cert.p12
+
+      - name: Configure notarytool credentials
+        env:
+          API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$API_KEY_BASE64" | base64 --decode > "~/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
+          xcrun notarytool store-credentials hark-notary-api \
+            --key "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8" \
+            --key-id "$API_KEY_ID" \
+            --issuer "$API_ISSUER_ID"
+
+      - name: Import Sparkle signing key
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          # generate_appcast picks up the private key from the system
+          # keychain item named `ed25519` under the `sparkle` service.
+          # Pipe the secret into stdin via `-w -` instead of substituting
+          # it into argv; the previous xargs form broke as soon as the
+          # secret contained whitespace or shell metacharacters.
+          printf '%s' "$SPARKLE_KEY" | security add-generic-password \
+            -a ed25519 -s "https://sparkle-project.org" -w - \
+            -U build.keychain
+
+      - name: Configure R2
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          mkdir -p ~/.aws
+          cat > ~/.aws/credentials <<EOF
+          [r2]
+          aws_access_key_id = $R2_ACCESS_KEY_ID
+          aws_secret_access_key = $R2_SECRET_ACCESS_KEY
+          EOF
+          echo "R2_ACCOUNT_ID=$R2_ACCOUNT_ID" >> "$GITHUB_ENV"
+
+      - name: Build sidecar
+        run: ./scripts/build-sidecar.sh
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Cut release
+        run: ./scripts/release.sh "$VERSION"
+
+      - name: Attach DMG to GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            macos/build/Release/Hark-${{ env.VERSION }}.dmg
+            macos/build/Release/appcast.xml
+          generate_release_notes: true
+          fail_on_unmatched_files: true

@@ -74,7 +74,26 @@ fi
 
 DMG_BYTES=$(stat -f%z "${DMG}" 2>/dev/null || stat -c%s "${DMG}")
 
-echo "==> [5/5] Uploading to Cloudflare R2"
+echo "==> [5/6] Generating Sparkle appcast"
+# Sparkle's `generate_appcast` tool reads every DMG in a directory and emits
+# an appcast.xml with EdDSA signatures derived from the private key the
+# user generated once via `generate_keys` (stored in the system keychain).
+# Skip gracefully if the user hasn't set up Sparkle yet — releases still
+# ship; auto-update simply won't be available until they wire it up.
+APPCAST="${BUILD}/appcast.xml"
+if command -v generate_appcast >/dev/null 2>&1; then
+    SPARKLE_DIR="$(mktemp -d -t hark-appcast)"
+    cp "${DMG}" "${SPARKLE_DIR}/"
+    generate_appcast "${SPARKLE_DIR}" -o "${APPCAST}" \
+        --download-url-prefix "https://dl.tellhark.com/" \
+        || echo "    ⚠ generate_appcast failed (skipping — auto-update will be stale)"
+    rm -rf "${SPARKLE_DIR}"
+else
+    echo "    generate_appcast not on PATH — \`brew install --cask sparkle\` to enable."
+    echo "    Then run \`generate_keys\` once and commit the public key into Info.plist (SUPublicEDKey)."
+fi
+
+echo "==> [6/6] Uploading to Cloudflare R2"
 # Upload is opt-in: skip cleanly if the user hasn't configured R2 locally
 # (still useful to be able to cut a notarized .app + .dmg without publishing).
 R2_PROFILE="${R2_PROFILE:-r2}"
@@ -104,6 +123,16 @@ else
         --endpoint-url "${ENDPOINT}" \
         --content-type "application/x-apple-diskimage" \
         --cache-control "no-cache, max-age=0, must-revalidate"
+    # Upload the appcast if we generated one. Sparkle clients re-fetch
+    # this on every check-for-updates, so cache-bust it the same way as
+    # latest.dmg.
+    if [ -f "${APPCAST}" ]; then
+        aws s3 cp "${APPCAST}" "s3://${R2_BUCKET_NAME}/appcast.xml" \
+            --profile "${R2_PROFILE}" \
+            --endpoint-url "${ENDPOINT}" \
+            --content-type "application/xml" \
+            --cache-control "no-cache, max-age=0, must-revalidate"
+    fi
     UPLOADED=true
 fi
 

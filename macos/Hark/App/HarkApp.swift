@@ -28,6 +28,7 @@ struct HarkApp: App {
                 hotkey: delegate.hotkey,
                 recorder: delegate.recorder,
                 transcriber: delegate.transcriber,
+                updater: delegate.updater,
                 onShowWelcome: { delegate.onboardingController.show() }
             )
         } label: {
@@ -51,6 +52,7 @@ private struct HarkMenu: View {
     @Bindable var hotkey: HotkeyManager
     @Bindable var recorder: AudioRecorder
     @Bindable var transcriber: Transcriber
+    @Bindable var updater: UpdateManager
     let onShowWelcome: () -> Void
 
     @Environment(\.openSettings)
@@ -70,6 +72,11 @@ private struct HarkMenu: View {
             openSettings()
         }
         .keyboardShortcut(",", modifiers: [.command])
+
+        Button("Check for Updates…") {
+            updater.checkForUpdates()
+        }
+        .disabled(!updater.canCheckForUpdates)
 
         Button("About Hark") {
             NSApp.orderFrontStandardAboutPanel(nil)

@@ -137,6 +137,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // user to attach to a bug report.
         CrashReporter.install()
 
+        // Opt-in HTTP upload sink. nil when the user hasn't configured
+        // an endpoint in Settings → General → Crash uploads — leaves
+        // the sink unset so crashes stay local-only by default. Wired
+        // immediately after install() so any crash during the rest of
+        // applicationDidFinishLaunching also gets uploaded if the user
+        // has opted in.
+        CrashReporter.sink = CrashUploadPreferences.buildSinkIfConfigured()
+
         // First line of the file log: marks launch boundary so support
         // bundles always have a clear "this is where this session started"
         // anchor when the user reports a bug from a long-running install.

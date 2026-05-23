@@ -36,17 +36,27 @@ enum WhisperModel: String, CaseIterable, Identifiable, Codable {
 
     var blurb: String {
         switch self {
-        case .tinyEn: "Smallest, fastest. Acceptable for short commands."
+        case .tinyEn: "Fastest cold load (~5s). Good for voice commands and short dictation."
         case .baseEn: "Quick and serviceable for routine dictation."
-        case .smallEn: "Recommended balance of accuracy and speed."
+        case .smallEn: "Best balance of accuracy and speed. Slower cold load (~30-60s)."
         case .mediumEn: "Best accuracy; slower download and inference."
         }
     }
 
+    /// True for the install-default model — labels it in the UI so users
+    /// know which one Hark picked for them. Tracks `Self.default` so a
+    /// future default change updates the badge automatically.
     var recommended: Bool {
-        self == .smallEn
+        self == Self.default
     }
 
     /// Default model the app picks on first run.
-    static let `default`: WhisperModel = .smallEn
+    ///
+    /// `tinyEn` is the default because cold-load time dominates first-use
+    /// UX: `smallEn` takes 30-150s on a fresh machine (CoreML compilation
+    /// of the larger AudioEncoder/TextDecoder), `tinyEn` is under 10s.
+    /// Users who want better accuracy can switch to `smallEn` from
+    /// Settings → Models — but they shouldn't be forced to wait two
+    /// minutes on their first launch to find that out.
+    static let `default`: WhisperModel = .tinyEn
 }

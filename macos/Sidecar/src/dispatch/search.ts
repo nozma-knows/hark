@@ -150,6 +150,7 @@ export const search: Dispatcher<SearchAction> = {
     return {
       summary: `Couldn't open ${def.displayName} search`,
       succeeded: false,
+      errorCode: "bash_failed",
       error: result.stderr.trim() || `exit ${result.exitCode}`,
       bashCommands: [result.command],
     };

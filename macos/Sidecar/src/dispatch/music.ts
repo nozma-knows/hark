@@ -80,6 +80,7 @@ export const music: Dispatcher<MusicAction> = {
     return {
       summary: `Music.app didn't accept "${command}"`,
       succeeded: false,
+      errorCode: "bash_failed",
       error: result.stderr.trim() || `exit ${result.exitCode}`,
       bashCommands: [result.command],
     };

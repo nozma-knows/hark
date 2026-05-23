@@ -1,6 +1,7 @@
 import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { formatChromeProfilesForPrompt, loadChromeProfiles } from "./chromeProfiles.ts";
+import { tryMatch } from "./dispatch/index.ts";
 import {
   consumeSdkStream,
   type ClaudeUsage,
@@ -44,18 +45,27 @@ export type ExecuteCommandParams = z.infer<typeof ExecuteCommandParams>;
 export interface ExecuteCommandResult {
   summary: string;
   succeeded: boolean;
-  /** Which code path produced this result — for telemetry + debugging. */
-  route: "llm-sdk";
+  /** Which code path produced this result — for telemetry + debugging.
+   *  "dispatcher" — deterministic match, no LLM involved (fast path).
+   *  "llm-sdk"    — fell through to the Claude Agent SDK. */
+  route: "dispatcher" | "llm-sdk";
+  /** Stable id of the dispatcher that fired, when `route === "dispatcher"`. */
+  dispatcherId?: string | undefined;
   /** Every Bash command the agent actually executed, in order. */
   bashCommands: string[];
-  /** Assistant turns observed (one per assistant message in the stream). */
+  /** Assistant turns observed (one per assistant message in the stream).
+   *  Zero when the dispatcher path handled the command without invoking
+   *  the LLM at all. */
   llmTurns: number;
   /** Total wall-clock for the whole command. */
   latencyMs: number;
   /** Disambiguates which failure path fired when `succeeded` is false. */
-  errorCode?: SdkErrorCode | undefined;
+  errorCode?: ExecuteCommandErrorCode | undefined;
   usage?: ClaudeUsage | undefined;
 }
+
+/** Union of every failure mode either route can produce. */
+export type ExecuteCommandErrorCode = SdkErrorCode | "dispatcher_failed";
 
 const SYSTEM_PROMPT = `You are a macOS automation agent. The user spoke a voice command — use Bash to execute it on their Mac.
 
@@ -96,9 +106,30 @@ export async function executeCommand(raw: unknown): Promise<ExecuteCommandResult
   const start = Date.now();
   const { transcript } = ExecuteCommandParams.parse(raw);
 
-  // Pre-load Chrome's profile name → directory mapping so Claude can map
-  // "my personal profile" / "work profile" to the right --profile-directory
-  // flag without guessing. Empty string when Chrome isn't installed.
+  // 1. Dispatcher path: deterministic match on the most common voice
+  //    commands ("open Linear", "take a screenshot", …). Skips the LLM
+  //    entirely on the happy path — fast (~tens of ms), free, immune
+  //    to the user's Claude Code settings.json permission state.
+  const matched = tryMatch(transcript);
+  if (matched !== null) {
+    const result = await matched.execute();
+    return {
+      summary: result.summary,
+      succeeded: result.succeeded,
+      route: "dispatcher",
+      dispatcherId: matched.id,
+      bashCommands: result.bashCommands,
+      llmTurns: 0,
+      latencyMs: Date.now() - start,
+      ...(result.error ? { errorCode: "dispatcher_failed" as const } : {}),
+    };
+  }
+
+  // 2. LLM fallback for anything the dispatchers don't handle. Pre-load
+  //    Chrome's profile name → directory mapping so Claude can map
+  //    "my personal profile" / "work profile" to the right
+  //    --profile-directory flag without guessing. Empty string when
+  //    Chrome isn't installed.
   const chromeProfilesSection = formatChromeProfilesForPrompt(
     await loadChromeProfiles()
   );

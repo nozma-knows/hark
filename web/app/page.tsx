@@ -46,6 +46,8 @@ function Hero() {
         </a>
         <a
           href={GITHUB_URL}
+          target="_blank"
+          rel="noopener noreferrer"
           className="inline-flex items-center justify-center rounded-full border border-zinc-200 dark:border-zinc-800 px-7 py-3.5 text-base font-medium hover:bg-zinc-50 dark:hover:bg-zinc-900 transition"
         >
           GitHub
@@ -124,6 +126,8 @@ function HowItWorks() {
           Transcription runs on-device via{" "}
           <a
             href="https://github.com/argmaxinc/WhisperKit"
+            target="_blank"
+            rel="noopener noreferrer"
             className="underline decoration-zinc-300 dark:decoration-zinc-700 hover:decoration-zinc-900 dark:hover:decoration-zinc-100"
           >
             WhisperKit
@@ -203,6 +207,8 @@ function Footer() {
         <div className="flex items-center gap-6">
           <a
             href={GITHUB_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="hover:text-zinc-900 dark:hover:text-zinc-100 transition"
           >
             GitHub

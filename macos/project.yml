@@ -10,6 +10,11 @@ packages:
   WhisperKit:
     url: https://github.com/argmaxinc/WhisperKit
     from: "1.0.0"
+  # Auto-update framework. Appcast is hosted at dl.tellhark.com/appcast.xml
+  # and signed with our EdDSA key (see scripts/release.sh).
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.8.0"
 
 options:
   bundleIdPrefix: co.milbo
@@ -31,6 +36,10 @@ settings:
     MARKETING_VERSION: "0.1.3"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_STRICT_CONCURRENCY: complete
+    # Warnings get treated as errors for the app target's Release builds
+    # below. Debug stays permissive so day-to-day iteration doesn't fail
+    # on a deprecation notice mid-edit. Set per-config because failing
+    # Debug builds wedge `xcodebuild test` runs.
     SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
     GCC_TREAT_WARNINGS_AS_ERRORS: NO
     SWIFT_COMPILATION_MODE: wholemodule
@@ -52,6 +61,13 @@ settings:
     Release:
       SWIFT_OPTIMIZATION_LEVEL: -O
       ONLY_ACTIVE_ARCH: NO
+      # Release builds are the artifact that ships to users — every
+      # warning that survives to this point is a latent bug or a
+      # deprecated API we should clean up before signing. Treat them
+      # as errors so the release pipeline fails loudly instead of
+      # quietly shipping warning-laden code.
+      SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+      GCC_TREAT_WARNINGS_AS_ERRORS: YES
       GCC_OPTIMIZATION_LEVEL: s
 
 targets:
@@ -73,6 +89,7 @@ targets:
     dependencies:
       - package: KeyboardShortcuts
       - package: WhisperKit
+      - package: Sparkle
     preBuildScripts:
       - name: Build Bun Sidecar
         path: scripts/build-sidecar.sh
@@ -85,23 +102,39 @@ targets:
           - $(SRCROOT)/Hark/Resources/Sidecar/hark-sidecar
         basedOnDependencyAnalysis: true
     postBuildScripts:
-      # Force macOS to load the app icon from Assets.car (which contains the
-      # full 16…1024 size matrix) instead of falling back to AppIcon.icns
-      # (which actool auto-emits but only fills with 16/128 — when macOS reads
-      # it for medium/large display contexts, it upscales 128 → blurry + the
-      # OS adds its own squircle mask → "nested squircle" rendering bug).
-      - name: Strip legacy icon refs (Assets.car only)
+      # macOS Tahoe (26+) renders Assets.car-only icons through its "Liquid
+      # Glass" compatibility layer — visible as a gray plate behind the
+      # icon's actual shape. Apps that ship a hand-crafted AppIcon.icns
+      # (Notes, Mail, Reminders) bypass that compatibility path. So we:
+      #   1. Replace actool's auto-emitted truncated AppIcon.icns with the
+      #      full-size one we generate from build-app-icon.swift (16…1024).
+      #   2. Set CFBundleIconFile = AppIcon so macOS reads our .icns
+      #      directly, instead of falling through to Assets.car.
+      # The asset catalog AppIcon entry stays as a fallback (Spotlight,
+      # Finder previews, etc. read from Assets.car).
+      - name: Install full-size AppIcon.icns
         runOnlyWhenInstalling: false
+        # `basedOnDependencyAnalysis: false` is the explicit "run every
+        # build" opt-in; without it Xcode tries to cache based on inputs
+        # AND we can't declare an outputFile because actool already
+        # produces AppIcon.icns at the same path (multiple-producers
+        # error). This phase runs after actool to overwrite that file.
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - $(SRCROOT)/Hark/Resources/AppIcon.icns
         script: |
           set -euo pipefail
           INFO_PLIST="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
-          ICNS="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/AppIcon.icns"
-          if [ -f "${INFO_PLIST}" ]; then
-            plutil -remove CFBundleIconFile "${INFO_PLIST}" 2>/dev/null || true
-            plutil -remove CFBundleIconFiles "${INFO_PLIST}" 2>/dev/null || true
+          SRC_ICNS="${SRCROOT}/Hark/Resources/AppIcon.icns"
+          DEST_ICNS="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/AppIcon.icns"
+          if [ -f "${SRC_ICNS}" ]; then
+            cp -f "${SRC_ICNS}" "${DEST_ICNS}"
+            echo "icon: installed hand-crafted AppIcon.icns ($(stat -f%z "${DEST_ICNS}") bytes)"
           fi
-          rm -f "${ICNS}"
-          echo "icon: stripped CFBundleIconFile + AppIcon.icns; Assets.car is the sole source"
+          if [ -f "${INFO_PLIST}" ]; then
+            plutil -replace CFBundleIconFile -string AppIcon "${INFO_PLIST}"
+            echo "icon: CFBundleIconFile=AppIcon (direct .icns lookup)"
+          fi
     info:
       path: Hark/Generated/Info.plist
       properties:
@@ -121,6 +154,30 @@ targets:
         NSHumanReadableCopyright: "Copyright © 2026 Noah Milberger."
         NSMicrophoneUsageDescription: "Hark transcribes your dictation on-device to draft tickets."
         NSAppleEventsUsageDescription: "Hark opens Terminal to launch Claude Code sessions for created tickets."
+        # Required by macOS Catalina+ (10.15) for any CGEventTap that reads
+        # keyboard events — even with .listenOnly. Without this, our Fn
+        # event tap installs successfully but receives ZERO events (silent
+        # permission denial; AXIsProcessTrusted still returns true).
+        NSInputMonitoringUsageDescription: "Hark listens for the Fn (globe) key globally to start dictation."
+        # Sparkle auto-update configuration. SUFeedURL points at the appcast
+        # we generate during release.sh. SUPublicEDKey is the EdDSA public
+        # key Sparkle verifies update signatures with — keep the private
+        # key offline (only on the release machine).
+        #
+        # SECURITY: SUPublicEDKey MUST be populated before enabling automatic
+        # checks. With an empty key, Sparkle silently disables signature
+        # verification and would auto-install ANY DMG served at the feed URL
+        # — including an attacker-controlled one. So we default
+        # SUEnableAutomaticChecks to FALSE and gate it in UpdateManager.swift
+        # behind a non-empty key check. To turn on auto-update:
+        #   1. brew install --cask sparkle
+        #   2. generate_keys                        (one-time)
+        #   3. paste the printed public key into SUPublicEDKey below
+        #   4. flip SUEnableAutomaticChecks to true
+        SUEnableAutomaticChecks: false
+        SUFeedURL: "https://dl.tellhark.com/appcast.xml"
+        SUPublicEDKey: ""
+        SUScheduledCheckInterval: 86400
         NSHighResolutionCapable: true
         # Only CFBundleIconName — when CFBundleIconFile is also set, macOS
         # reads the (truncated, 14 KB) AppIcon.icns instead of the full
@@ -168,6 +225,11 @@ targets:
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Hark.app/Contents/MacOS/Hark
         PRODUCT_BUNDLE_IDENTIFIER: co.milbo.hark.tests
         GENERATE_INFOPLIST_FILE: YES
+        # The C bridge wraps `fork(2)` (which Swift marks unavailable)
+        # so signal-integration tests can spawn a child process that
+        # actually raises a fatal signal. The bridging header lives
+        # alongside the test sources.
+        SWIFT_OBJC_BRIDGING_HEADER: Tests/HarkTests/include/HarkForkBridge.h
 
 schemes:
   Hark:

@@ -1,7 +1,8 @@
 import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import { renderHistoryPreamble } from "../conversation.ts";
 import { consumeSdkStream } from "../sdkStream.ts";
 import { buildSystemPrompt } from "./prompt.ts";
-import type { AgentClient, AgentRunResult } from "./types.ts";
+import type { AgentClient, AgentExecuteOpts, AgentRunResult } from "./types.ts";
 
 /**
  * AgentClient backed by the Claude Agent SDK. Used when the user has
@@ -27,10 +28,14 @@ export class SdkClient implements AgentClient {
 
   constructor(private readonly opts: SdkClientOpts) {}
 
-  async executeCommand(transcript: string): Promise<AgentRunResult> {
+  async executeCommand(
+    transcript: string,
+    runOpts: AgentExecuteOpts = {}
+  ): Promise<AgentRunResult> {
     const systemPrompt = await buildSystemPrompt();
+    const preamble = renderHistoryPreamble(runOpts.recentTurns ?? []);
     const stream = query({
-      prompt: `${systemPrompt}\n\nVoice command: ${transcript}`,
+      prompt: `${systemPrompt}\n\n${preamble}Voice command: ${transcript}`,
       options: {
         maxTurns: 6,
         allowedTools: ["Bash"],

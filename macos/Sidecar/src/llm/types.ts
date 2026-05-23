@@ -1,3 +1,4 @@
+import type { ConversationTurn } from "../conversation.ts";
 import type { ClaudeUsage, SdkErrorCode } from "../sdkStream.ts";
 import type { LlmErrorCode } from "./toolLoop.ts";
 
@@ -13,9 +14,24 @@ import type { LlmErrorCode } from "./toolLoop.ts";
  * client file would close the cycle.
  */
 
+export interface AgentExecuteOpts {
+  /**
+   * Recent voice commands from this session, oldest first. Both clients
+   * prepend a short rendering of these to the user prompt so the model
+   * can resolve follow-ups like "now share that" against the actual
+   * prior action. Empty array on first command of a session — clients
+   * should suppress the preamble entirely in that case so the
+   * prompt-cache hit rate stays high.
+   */
+  readonly recentTurns?: ReadonlyArray<ConversationTurn>;
+}
+
 export interface AgentClient {
   readonly kind: "messages" | "sdk";
-  executeCommand(transcript: string): Promise<AgentRunResult>;
+  executeCommand(
+    transcript: string,
+    opts?: AgentExecuteOpts
+  ): Promise<AgentRunResult>;
 }
 
 export interface AgentRunResult {

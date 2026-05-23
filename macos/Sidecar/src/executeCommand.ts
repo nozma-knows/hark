@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defaultStore, type ConversationStore } from "./conversation.ts";
 import { tryMatch } from "./dispatch/index.ts";
 import {
   createAgentClient,
@@ -81,14 +82,32 @@ export function _resetAgentClientForTests(): void {
   cachedClientKind = null;
 }
 
-export async function executeCommand(raw: unknown): Promise<ExecuteCommandResult> {
+/**
+ * Test seam — inject an alternate conversation store. Production
+ * uses the module-level `defaultStore`. Tests pass a fresh store so
+ * cases don't leak state into each other.
+ */
+export interface ExecuteCommandDeps {
+  conversationStore?: ConversationStore;
+}
+
+export async function executeCommand(
+  raw: unknown,
+  deps: ExecuteCommandDeps = {}
+): Promise<ExecuteCommandResult> {
   const start = Date.now();
   const { transcript } = ExecuteCommandParams.parse(raw);
+  const store = deps.conversationStore ?? defaultStore;
 
-  // 1. Dispatcher path.
+  // 1. Dispatcher path. Dispatchers are intent-matched by regex, not
+  //    by language model — they don't need history to fire. But we
+  //    DO record their results so a follow-up that falls through to
+  //    the LLM ("now share that screenshot") still sees the prior
+  //    action in its context.
   const matched = tryMatch(transcript);
   if (matched !== null) {
     const result = await matched.execute();
+    store.record({ transcript, summary: result.summary });
     return {
       summary: result.summary,
       succeeded: result.succeeded,
@@ -101,7 +120,8 @@ export async function executeCommand(raw: unknown): Promise<ExecuteCommandResult
     };
   }
 
-  // 2. LLM fallback.
+  // 2. LLM fallback — pull recent turns BEFORE the call so the model
+  //    can resolve pronouns / "now" / "also" against actual context.
   const client = getAgentClient();
   if (client === null) {
     return {
@@ -115,7 +135,11 @@ export async function executeCommand(raw: unknown): Promise<ExecuteCommandResult
     };
   }
 
-  const r = await client.executeCommand(transcript);
+  const recentTurns = store.recentTurns();
+  const r = await client.executeCommand(transcript, { recentTurns });
+  // Record AFTER the call so the new turn isn't visible to itself
+  // (would be self-referential context noise).
+  store.record({ transcript, summary: r.summary });
   return {
     summary: r.summary,
     succeeded: r.succeeded,

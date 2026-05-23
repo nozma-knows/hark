@@ -1,6 +1,7 @@
+import { renderHistoryPreamble } from "../conversation.ts";
 import { runBash } from "../runBash.ts";
 import { buildSystemPrompt } from "./prompt.ts";
-import type { AgentClient, AgentRunResult } from "./types.ts";
+import type { AgentClient, AgentExecuteOpts, AgentRunResult } from "./types.ts";
 import { BASH_TOOL, type BashToolInput } from "./tools.ts";
 import { runToolLoop, type LlmRunOpts } from "./toolLoop.ts";
 
@@ -29,13 +30,17 @@ export class MessagesClient implements AgentClient {
 
   constructor(private readonly opts: MessagesClientOpts) {}
 
-  async executeCommand(transcript: string): Promise<AgentRunResult> {
+  async executeCommand(
+    transcript: string,
+    runOpts: AgentExecuteOpts = {}
+  ): Promise<AgentRunResult> {
     const systemPrompt = await buildSystemPrompt();
+    const preamble = renderHistoryPreamble(runOpts.recentTurns ?? []);
     const toolOpts: LlmRunOpts = {
       apiKey: this.opts.apiKey,
       model: this.opts.model ?? DEFAULT_MODEL,
       systemPrompt,
-      userPrompt: `Voice command: ${transcript}`,
+      userPrompt: `${preamble}Voice command: ${transcript}`,
       tools: [BASH_TOOL],
       onToolUse: async (block) => {
         const input = block.input as Partial<BashToolInput>;

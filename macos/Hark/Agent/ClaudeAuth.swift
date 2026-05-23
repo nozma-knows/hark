@@ -60,28 +60,60 @@ final class ClaudeAuth {
     func refresh() {
         let env = ProcessInfo.processInfo.environment
         claudeBinaryPath = Self.findClaudeBinary()
-
-        // Priority: subscription OAuth in env > ~/.claude/ presence > API key in env
-        if env["CLAUDE_CODE_OAUTH_TOKEN"]?.isEmpty == false {
-            method = .subscription(source: .environment)
-        } else if Self.claudeHomeExists() {
-            method = .subscription(source: .claudeHome)
-        } else if env["ANTHROPIC_API_KEY"]?.isEmpty == false {
-            method = .apiKey(source: .environment)
-        } else {
-            method = .none
-        }
+        method = Self.detectMethod(env: env, claudeHomeExists: Self.claudeHomeExists())
         let described = String(describing: method)
         Self.logger.debug("Detected auth method: \(described, privacy: .public)")
+    }
+
+    /// Pure-function detection — exposed for tests so the precedence rules
+    /// (OAuth env > ~/.claude/ > API key env) can be pinned down without
+    /// touching real process state. `internal` (not `private`) for
+    /// `@testable import`.
+    nonisolated static func detectMethod(
+        env: [String: String],
+        claudeHomeExists: Bool
+    )
+        -> ClaudeAuthMethod
+    {
+        // Priority: subscription OAuth in env > ~/.claude/ presence > API key in env
+        if env["CLAUDE_CODE_OAUTH_TOKEN"]?.isEmpty == false {
+            return .subscription(source: .environment)
+        }
+        if claudeHomeExists {
+            return .subscription(source: .claudeHome)
+        }
+        if env["ANTHROPIC_API_KEY"]?.isEmpty == false {
+            return .apiKey(source: .environment)
+        }
+        return .none
     }
 
     /// Environment variables to inject into the sidecar `Process` so the
     /// Agent SDK can authenticate. Never logged in full.
     func sidecarEnvironment() -> [String: String] {
-        var env = ProcessInfo.processInfo.environment
+        Self.buildSidecarEnvironment(
+            base: ProcessInfo.processInfo.environment,
+            fallbackHome: FileManager.default.urls(for: .userDirectory, in: .userDomainMask).first?.path,
+            claudeBinaryPath: claudeBinaryPath
+        )
+    }
+
+    /// Pure-function variant for tests. Composes the sidecar environment
+    /// dictionary from a base env + optional fallback HOME + optional
+    /// claude binary path, without touching `ProcessInfo` or `FileManager`.
+    nonisolated static func buildSidecarEnvironment(
+        base: [String: String],
+        fallbackHome: String?,
+        claudeBinaryPath: String?
+    )
+        -> [String: String]
+    {
+        var env = base
         // Make sure HOME is propagated for Claude Code's ~/.claude lookup.
-        if env["HOME"] == nil, let home = FileManager.default.urls(for: .userDirectory, in: .userDomainMask).first {
-            env["HOME"] = home.path
+        // Don't OVERWRITE an existing HOME — users with custom shells may
+        // have set it deliberately.
+        if env["HOME"] == nil, let fallbackHome {
+            env["HOME"] = fallbackHome
         }
         // The Agent SDK ships an optional ~200 MB native `claude` binary that
         // `bun build --compile` doesn't include in our single-binary build.
@@ -117,13 +149,36 @@ final class ClaudeAuth {
     }
 
     private static func findClaudeBinary() -> String? {
-        let candidates = [
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? ""
+        return firstExecutable(
+            candidates: candidatePaths(home: home),
+            isExecutable: FileManager.default.isExecutableFile(atPath:)
+        )
+    }
+
+    /// Canonical search order for the `claude` CLI binary. `internal`
+    /// so tests can pin down the order — moving Homebrew's prefix
+    /// earlier or later changes which install of `claude` wins on
+    /// machines that have several.
+    nonisolated static func candidatePaths(home: String) -> [String] {
+        [
             "/opt/homebrew/bin/claude",
             "/usr/local/bin/claude",
-            "\(ProcessInfo.processInfo.environment["HOME"] ?? "")/.local/bin/claude",
-            "\(ProcessInfo.processInfo.environment["HOME"] ?? "")/.claude/local/claude"
+            "\(home)/.local/bin/claude",
+            "\(home)/.claude/local/claude"
         ]
-        let fm = FileManager.default
-        return candidates.first(where: { fm.isExecutableFile(atPath: $0) })
+    }
+
+    /// First candidate path that passes the executability check, or nil
+    /// if none does. Pure function — tests inject a closure to simulate
+    /// "only /usr/local/bin/claude is executable" etc. without touching
+    /// the real filesystem.
+    nonisolated static func firstExecutable(
+        candidates: [String],
+        isExecutable: (String) -> Bool
+    )
+        -> String?
+    {
+        candidates.first(where: isExecutable)
     }
 }

@@ -1,6 +1,11 @@
 import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { formatChromeProfilesForPrompt, loadChromeProfiles } from "./chromeProfiles.ts";
+import {
+  consumeSdkStream,
+  type ClaudeUsage,
+  type SdkErrorCode,
+} from "./sdkStream.ts";
 
 /**
  * Voice command → macOS action. Claude reads the user's spoken request,
@@ -15,6 +20,14 @@ import { formatChromeProfilesForPrompt, loadChromeProfiles } from "./chromeProfi
  * Bash is restricted via `allowedTools` so Claude can't touch files / edit
  * code / use other Claude Code tools in this mode. `maxTurns` caps the
  * agent so a confused interpretation can't loop forever.
+ *
+ * Reliability: post-stream we VERIFY that Bash actually ran. The Claude
+ * Code CLI applies the user's `~/.claude/settings.json` permission rules
+ * to every tool call — in a headless sidecar context with `defaultMode:
+ * "auto"` and no Bash allow-rule, the auto classifier denies the call,
+ * the SDK swallows the denial, and Claude generates "Opened Linear"
+ * narratively. We catch this in `consumeSdkStream` so the user sees a
+ * real failure instead of a fake-success pill.
  */
 
 export const ExecuteCommandParams = z.object({
@@ -22,15 +35,26 @@ export const ExecuteCommandParams = z.object({
 });
 export type ExecuteCommandParams = z.infer<typeof ExecuteCommandParams>;
 
+/**
+ * Wire shape Swift decodes. Stays backwards-compatible: existing fields
+ * (`summary`, `succeeded`, `usage`) keep their meaning; new fields are
+ * additive and `JSONDecoder` on the Swift side ignores unknown keys, so
+ * old releases of Hark keep working with this shape.
+ */
 export interface ExecuteCommandResult {
   summary: string;
   succeeded: boolean;
-  usage?: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-  };
+  /** Which code path produced this result — for telemetry + debugging. */
+  route: "llm-sdk";
+  /** Every Bash command the agent actually executed, in order. */
+  bashCommands: string[];
+  /** Assistant turns observed (one per assistant message in the stream). */
+  llmTurns: number;
+  /** Total wall-clock for the whole command. */
+  latencyMs: number;
+  /** Disambiguates which failure path fired when `succeeded` is false. */
+  errorCode?: SdkErrorCode | undefined;
+  usage?: ClaudeUsage | undefined;
 }
 
 const SYSTEM_PROMPT = `You are a macOS automation agent. The user spoke a voice command — use Bash to execute it on their Mac.
@@ -69,11 +93,8 @@ Rules:
 - If the command genuinely can't be executed (e.g. app not installed), say so in one short sentence.`;
 
 export async function executeCommand(raw: unknown): Promise<ExecuteCommandResult> {
+  const start = Date.now();
   const { transcript } = ExecuteCommandParams.parse(raw);
-
-  let summary = "";
-  let succeeded = false;
-  let usage: ExecuteCommandResult["usage"];
 
   // Pre-load Chrome's profile name → directory mapping so Claude can map
   // "my personal profile" / "work profile" to the right --profile-directory
@@ -89,43 +110,25 @@ export async function executeCommand(raw: unknown): Promise<ExecuteCommandResult
 
   const systemPrompt = `${SYSTEM_PROMPT}${chromeProfilesSection}`;
 
-  for await (const message of query({
+  const stream = query({
     prompt: `${systemPrompt}\n\nVoice command: ${transcript}`,
     options: {
       maxTurns: 6,
       allowedTools: ["Bash"],
       ...(claudeBinary ? { pathToClaudeCodeExecutable: claudeBinary } : {}),
     },
-  }) as AsyncIterable<SDKMessage>) {
-    if (message.type === "result") {
-      const m = message as unknown as {
-        subtype?: string;
-        result?: string;
-        error?: string;
-        usage?: Record<string, number>;
-      };
-      if (m.subtype === "success" && typeof m.result === "string") {
-        summary = m.result.trim();
-        succeeded = true;
-      } else {
-        summary = (m.error ?? "Command failed").toString();
-        succeeded = false;
-      }
-      if (m.usage) {
-        usage = {
-          inputTokens: Number(m.usage.input_tokens ?? 0),
-          outputTokens: Number(m.usage.output_tokens ?? 0),
-          cacheReadTokens: Number(m.usage.cache_read_input_tokens ?? 0),
-          cacheCreationTokens: Number(m.usage.cache_creation_input_tokens ?? 0),
-        };
-      }
-    }
-  }
+  }) as AsyncIterable<SDKMessage>;
 
-  if (summary.length === 0) {
-    summary = "Agent returned no summary";
-    succeeded = false;
-  }
+  const result = await consumeSdkStream(stream);
 
-  return { summary, succeeded, usage };
+  return {
+    summary: result.summary,
+    succeeded: result.succeeded,
+    route: "llm-sdk",
+    bashCommands: result.bashCommands,
+    llmTurns: result.llmTurns,
+    latencyMs: Date.now() - start,
+    ...(result.errorCode ? { errorCode: result.errorCode } : {}),
+    ...(result.usage ? { usage: result.usage } : {}),
+  };
 }

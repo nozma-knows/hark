@@ -61,7 +61,7 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: "1.3.4"
 
       - name: Import signing certificate
         env:
@@ -119,6 +119,17 @@ jobs:
           aws_secret_access_key = $R2_SECRET_ACCESS_KEY
           EOF
           echo "R2_ACCOUNT_ID=$R2_ACCOUNT_ID" >> "$GITHUB_ENV"
+
+      - name: Verify sidecar tests pass (gates release)
+        # A regression that lands on main between PR merge and tag push would
+        # otherwise ship a notarized DMG with broken voice commands. The Bun
+        # suite covers the dispatcher logic, tool-use verification, and auth
+        # precedence — exactly the code paths an end user exercises first.
+        working-directory: macos/Sidecar
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun test
 
       - name: Build sidecar
         run: ./scripts/build-sidecar.sh

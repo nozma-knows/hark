@@ -1,11 +1,6 @@
 import Image from "next/image";
+import { VERSION, DOWNLOAD_URL } from "@/lib/version";
 
-// Versioned URL — bumping the version constant invalidates every browser /
-// CDN cache for the download button (the unversioned latest.dmg URL had
-// stubborn cache layers serving stale builds even with no-cache headers).
-const VERSION_NUM = "0.1.3";
-const VERSION = `v${VERSION_NUM}`;
-const DOWNLOAD_URL = `https://dl.tellhark.com/Hark-${VERSION_NUM}.dmg`;
 const GITHUB_URL = "https://github.com/nozma-knows/hark";
 
 export default function Home() {

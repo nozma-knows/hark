@@ -22,6 +22,12 @@ struct PanelRootView: View {
     /// independently-sized views.
     @Namespace private var pillBackground
 
+    /// Seconds elapsed since the transcriber entered `.loading`. Ticks
+    /// once per second while a load is in flight; SwiftUI re-evaluates
+    /// `mode` on every change so the "Warming up Whisper…" pill appears
+    /// exactly when `PanelViewModel.loadingIndicatorGrace` is crossed.
+    @State private var loadingElapsed: TimeInterval = 0
+
     var body: some View {
         VStack {
             Spacer()
@@ -34,6 +40,21 @@ struct PanelRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.clear)
+        .task(id: transcriber.loadingStartedAt) {
+            // Drive the 1Hz tick that promotes a long-running load
+            // into the "Warming up…" pill. The task is bound to
+            // `loadingStartedAt` so it auto-cancels when load finishes
+            // (started→nil) or restarts (nil→started) without us
+            // hand-rolling timer lifecycle.
+            guard let started = transcriber.loadingStartedAt else {
+                loadingElapsed = 0
+                return
+            }
+            while !Task.isCancelled {
+                loadingElapsed = Date().timeIntervalSince(started)
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -74,7 +95,8 @@ struct PanelRootView: View {
             isExecutingCommand: appState.isExecutingCommand,
             isPolishing: appState.isPolishing,
             commandResult: appState.commandResult,
-            transcript: appState.transcript
+            transcript: appState.transcript,
+            loadingElapsedSeconds: transcriber.loadingStartedAt == nil ? nil : loadingElapsed
         )
     }
 }

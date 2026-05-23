@@ -62,21 +62,68 @@ final class PanelViewModelTests: XCTestCase {
 
     // MARK: - Model lifecycle states show only when no real work is in flight
 
-    func testLoadingFallsThroughToIdle() {
-        // The .loading state is INTENTIONALLY invisible on the pill —
-        // see PanelViewModel doc-comment. Bootstrap warm-up can take
-        // 60-120s with no progress signal; showing a spinner that long
-        // looks broken. Users who record during warm-up get a clearer
-        // error pill via the modelNotLoaded path.
+    func testLoadingFallsThroughToIdleWhenWithinGrace() {
+        // Fast warmups (sub-grace) stay invisible. The pill doesn't flash
+        // a transient "Warming up Whisper…" for the typical 1-3s warm-cache
+        // load — that would just look like a flicker on every launch.
         let mode = PanelViewModel.mode(
             recorderState: .idle,
             transcriberState: .loading(.default),
             isExecutingCommand: false,
             isPolishing: false,
             commandResult: nil,
-            transcript: nil
+            transcript: nil,
+            loadingElapsedSeconds: 3
         )
         XCTAssertEqual(mode, .idle)
+    }
+
+    func testLoadingShowsPillWhenGraceExceeded() {
+        // Cold loads on a fresh machine can take 60-150s. After the grace
+        // window (8s), surface a pill so the user knows the app isn't
+        // broken — without this they'd see only an "Whisper isn't loaded
+        // yet" error pill on first recording attempt with no prior signal.
+        let mode = PanelViewModel.mode(
+            recorderState: .idle,
+            transcriberState: .loading(.default),
+            isExecutingCommand: false,
+            isPolishing: false,
+            commandResult: nil,
+            transcript: nil,
+            loadingElapsedSeconds: PanelViewModel.loadingIndicatorGrace
+        )
+        XCTAssertEqual(mode, .processing(label: "Warming up Whisper…"))
+    }
+
+    func testLoadingWithoutElapsedDataFallsThroughToIdle() {
+        // Defensive: when the caller hasn't wired the elapsed counter
+        // yet (or transcriber.loadingStartedAt was nil), don't surface
+        // the pill. Production view passes nil in this case; we treat
+        // it as "no grace tracking yet" rather than "grace exceeded".
+        let mode = PanelViewModel.mode(
+            recorderState: .idle,
+            transcriberState: .loading(.default),
+            isExecutingCommand: false,
+            isPolishing: false,
+            commandResult: nil,
+            transcript: nil,
+            loadingElapsedSeconds: nil
+        )
+        XCTAssertEqual(mode, .idle)
+    }
+
+    func testLoadingDoesNotMaskHigherPriorityStates() {
+        // Even WITH the grace exceeded, a recording in flight wins.
+        let mode = PanelViewModel.mode(
+            recorderState: .recording,
+            transcriberState: .loading(.default),
+            isExecutingCommand: false,
+            isPolishing: false,
+            commandResult: nil,
+            transcript: nil,
+            loadingElapsedSeconds: 60
+        )
+        XCTAssertEqual(mode, .recording)
     }
 
     func testDownloadingShowsProgress() {

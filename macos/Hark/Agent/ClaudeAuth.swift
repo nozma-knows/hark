@@ -38,6 +38,9 @@ enum ClaudeAuthSource: String, Equatable {
     case environment
     /// `~/.claude/` directory exists (Claude Code CLI keeps credentials here).
     case claudeHome = "~/.claude/"
+    /// User pasted an `ANTHROPIC_API_KEY` into Settings; stored in the
+    /// macOS login keychain under service `co.milbo.hark`.
+    case keychain
 }
 
 @MainActor
@@ -45,45 +48,99 @@ enum ClaudeAuthSource: String, Equatable {
 final class ClaudeAuth {
     private static let logger = Logger(subsystem: "co.milbo.hark", category: "ClaudeAuth")
 
+    /// Keychain account name for the user-entered `ANTHROPIC_API_KEY`.
+    /// Kept here as the single source of truth so tests, settings UI,
+    /// and the sidecar env builder all reference the same value.
+    static let keychainApiKeyAccount = "ANTHROPIC_API_KEY"
+
     private(set) var method: ClaudeAuthMethod = .none
 
     /// Did we detect a `claude` CLI binary on PATH? Used by the onboarding to
     /// offer "Generate OAuth token" only when it's runnable.
     private(set) var claudeBinaryPath: String?
 
+    /// Fires when the caller mutates auth state (saving / clearing the
+    /// Keychain API key). AppDelegate stops the sidecar in response so the
+    /// next request spawns a fresh process with the new env injected.
+    /// Without this, an API key saved in Settings wouldn't take effect
+    /// until the user quit and relaunched Hark.
+    var onCredentialsChanged: (() -> Void)?
+
     init() {
         refresh()
     }
 
-    /// Re-probe the environment + filesystem for usable auth. Cheap; safe to
-    /// call from the onboarding poll or after a manual config change.
+    /// Re-probe the environment + filesystem + keychain for usable auth.
+    /// Cheap; safe to call from the onboarding poll or after a manual
+    /// config change.
     func refresh() {
         let env = ProcessInfo.processInfo.environment
         claudeBinaryPath = Self.findClaudeBinary()
-        method = Self.detectMethod(env: env, claudeHomeExists: Self.claudeHomeExists())
+        let keychainKey = Keychain.read(account: Self.keychainApiKeyAccount)
+        method = Self.detectMethod(
+            env: env,
+            keychainApiKey: keychainKey,
+            claudeHomeExists: Self.claudeHomeExists()
+        )
         let described = String(describing: method)
         Self.logger.debug("Detected auth method: \(described, privacy: .public)")
     }
 
+    /// Persist a user-supplied API key to the Keychain. Pass nil or
+    /// whitespace to clear. Triggers `onCredentialsChanged` so the
+    /// sidecar can pick up the new env immediately.
+    func setApiKey(_ key: String?) throws {
+        let trimmed = key?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty {
+            Keychain.delete(account: Self.keychainApiKeyAccount)
+        } else {
+            try Keychain.write(trimmed, account: Self.keychainApiKeyAccount)
+        }
+        refresh()
+        onCredentialsChanged?()
+    }
+
+    /// Is an API key currently stored in the Keychain? Used by the
+    /// Settings UI to render "configured" state without revealing
+    /// the key itself.
+    var hasKeychainApiKey: Bool {
+        (Keychain.read(account: Self.keychainApiKeyAccount)?.isEmpty == false)
+    }
+
     /// Pure-function detection — exposed for tests so the precedence rules
-    /// (OAuth env > ~/.claude/ > API key env) can be pinned down without
-    /// touching real process state. `internal` (not `private`) for
-    /// `@testable import`.
+    /// can be pinned down without touching real process state.
+    ///
+    /// Precedence (highest first):
+    ///   1. `ANTHROPIC_API_KEY` env var — explicit shell export wins;
+    ///      activates the fast Messages API path in the sidecar.
+    ///   2. `ANTHROPIC_API_KEY` from Keychain — user pasted into Settings.
+    ///      Same fast path; persists across launches.
+    ///   3. `CLAUDE_CODE_OAUTH_TOKEN` env var — subscription via env.
+    ///   4. `~/.claude/` directory — subscription via Claude Code CLI install.
+    ///
+    /// Why API key beats subscription: the Messages API path is faster
+    /// (Haiku 4.5 + prompt caching, sub-second) and immune to the user's
+    /// `~/.claude/settings.json` permission rules that have bitten
+    /// subscription users with silent Bash denials. If the user
+    /// explicitly configured an API key, they want the better path.
     nonisolated static func detectMethod(
         env: [String: String],
+        keychainApiKey: String?,
         claudeHomeExists: Bool
     )
         -> ClaudeAuthMethod
     {
-        // Priority: subscription OAuth in env > ~/.claude/ presence > API key in env
+        if env["ANTHROPIC_API_KEY"]?.isEmpty == false {
+            return .apiKey(source: .environment)
+        }
+        if keychainApiKey?.isEmpty == false {
+            return .apiKey(source: .keychain)
+        }
         if env["CLAUDE_CODE_OAUTH_TOKEN"]?.isEmpty == false {
             return .subscription(source: .environment)
         }
         if claudeHomeExists {
             return .subscription(source: .claudeHome)
-        }
-        if env["ANTHROPIC_API_KEY"]?.isEmpty == false {
-            return .apiKey(source: .environment)
         }
         return .none
     }
@@ -94,17 +151,20 @@ final class ClaudeAuth {
         Self.buildSidecarEnvironment(
             base: ProcessInfo.processInfo.environment,
             fallbackHome: FileManager.default.urls(for: .userDirectory, in: .userDomainMask).first?.path,
-            claudeBinaryPath: claudeBinaryPath
+            claudeBinaryPath: claudeBinaryPath,
+            keychainApiKey: Keychain.read(account: Self.keychainApiKeyAccount)
         )
     }
 
     /// Pure-function variant for tests. Composes the sidecar environment
     /// dictionary from a base env + optional fallback HOME + optional
-    /// claude binary path, without touching `ProcessInfo` or `FileManager`.
+    /// claude binary path + optional Keychain-stored API key, without
+    /// touching `ProcessInfo`, `FileManager`, or the real Keychain.
     nonisolated static func buildSidecarEnvironment(
         base: [String: String],
         fallbackHome: String?,
-        claudeBinaryPath: String?
+        claudeBinaryPath: String?,
+        keychainApiKey: String? = nil
     )
         -> [String: String]
     {
@@ -122,6 +182,14 @@ final class ClaudeAuth {
         // avoiding the "Native CLI binary for darwin-arm64 not found" error.
         if let path = claudeBinaryPath {
             env["HARK_CLAUDE_BINARY"] = path
+        }
+        // Keychain-stored API key surfaces as ANTHROPIC_API_KEY in the
+        // sidecar's env so `detectAgentAuth` (TypeScript) picks the fast
+        // Messages API path. Explicit env-set key takes precedence — a
+        // user who exports the var in their shell wins over the saved
+        // Keychain entry, which is the usual shell-overrides-config rule.
+        if env["ANTHROPIC_API_KEY"]?.isEmpty != false, let key = keychainApiKey, !key.isEmpty {
+            env["ANTHROPIC_API_KEY"] = key
         }
         return env
     }

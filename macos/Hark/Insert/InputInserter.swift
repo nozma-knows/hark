@@ -1,4 +1,8 @@
-import AppKit
+// AppKit's NSPasteboard isn't `Sendable` in Swift 6 strict mode, but we
+// always touch the singleton from MainActor (or via DispatchQueue.main
+// in the restore-after-delay path, which IS MainActor). `@preconcurrency`
+// silences the cross-module warning without changing our guarantees.
+@preconcurrency import AppKit
 import ApplicationServices
 import CoreGraphics
 import OSLog
@@ -67,15 +71,43 @@ enum InputInserter {
         postCommandV()
 
         // Restore prior clipboard after the paste has had time to land.
+        // The closure passed to `asyncAfter` is treated as `@Sendable`, so
+        // we capture `pasteboard` through a SendableBox — NSPasteboard
+        // itself isn't Sendable, but accessing the shared `general`
+        // singleton from the main queue is always safe.
+        let pasteboardBox = PasteboardBox(pasteboard)
         DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay) {
-            // If something else has overwritten the pasteboard in the meantime,
-            // don't clobber it.
-            if pasteboard.string(forType: .string) == text {
-                pasteboard.clearContents()
+            let pb = pasteboardBox.value
+            // If something else has overwritten the pasteboard in the
+            // meantime, don't clobber it.
+            if pb.string(forType: .string) == text {
+                pb.clearContents()
                 if let previousString {
-                    pasteboard.setString(previousString, forType: .string)
+                    pb.setString(previousString, forType: .string)
                 }
             }
+        }
+    }
+
+    /// Carries the (non-Sendable) NSPasteboard reference into the
+    /// `@Sendable` `asyncAfter` closure.
+    ///
+    /// Threading / lifetime contract:
+    ///   - We only ever box `NSPasteboard.general`, a process-wide
+    ///     singleton — never a per-call instance — so the boxed
+    ///     reference never dangles.
+    ///   - The closure that reads it runs on `DispatchQueue.main` (i.e.
+    ///     the main thread), and the production call site of `paste(_:)`
+    ///     is itself main-thread (called from `RecordingOrchestrator` on
+    ///     MainActor). So both writers and the deferred reader are
+    ///     serialized on the same thread.
+    ///   - `@unchecked Sendable` only satisfies Swift 6's static checker
+    ///     for the `asyncAfter` closure signature; it doesn't reflect
+    ///     any real cross-thread sharing.
+    private struct PasteboardBox: @unchecked Sendable {
+        let value: NSPasteboard
+        init(_ value: NSPasteboard) {
+            self.value = value
         }
     }
 

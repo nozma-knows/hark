@@ -1,4 +1,10 @@
-import AVFoundation
+// AVFoundation's AVAudioPCMBuffer / AVAudioConverter aren't `Sendable` in
+// Swift 6 strict-concurrency mode even though they're trivially safe to
+// pass into a synchronous-callback closure like the one we use here.
+// `@preconcurrency` silences the cross-module warning without affecting
+// our own concurrency guarantees (the tap callback runs on a private
+// audio thread; we hop back to MainActor explicitly via Task).
+@preconcurrency import AVFoundation
 import Foundation
 import Observation
 
@@ -146,14 +152,21 @@ final class AudioRecorder {
             return ([], 0)
         }
 
-        var providerCalled = false
+        // `providerFlag` lives in a reference-typed box so the converter's
+        // input callback (which Swift 6 sees as @Sendable even though
+        // AVAudioConverter calls it synchronously) can mutate the flag
+        // without tripping captured-var diagnostics. The callback fires
+        // exactly twice — once to provide the buffer, then again to
+        // signal "no more data" — so this is just plumbing for the
+        // call-once contract AVAudioConverter expects.
+        let providerFlag = ProviderFlag()
         var conversionError: NSError?
         let status = converter.convert(to: output, error: &conversionError) { _, statusPtr in
-            if providerCalled {
+            if providerFlag.called {
                 statusPtr.pointee = .noDataNow
                 return nil
             }
-            providerCalled = true
+            providerFlag.called = true
             statusPtr.pointee = .haveData
             return input
         }
@@ -175,5 +188,22 @@ final class AudioRecorder {
         let rms = sqrt(sumSquares / Float(count))
 
         return (samples, rms)
+    }
+
+    /// Reference-typed flag used inside the AVAudioConverter input
+    /// callback. See `downsampleAndMeasure` for rationale.
+    ///
+    /// Threading / lifetime contract: `ProviderFlag` is created on the
+    /// audio-tap thread, captured by the `convert(to:error:withInputFrom:)`
+    /// closure, and accessed ONLY from inside `AVAudioConverter.convert` —
+    /// which calls its input callback synchronously, on the calling
+    /// thread, exactly twice per invocation. There is no concurrent
+    /// access in practice; the `@unchecked Sendable` annotation only
+    /// satisfies Swift 6's static checker for the `@Sendable` closure
+    /// signature AVAudioConverter declares. Since the flag is a stack-
+    /// local that doesn't outlive `downsampleAndMeasure`, no lifetime
+    /// concern exists either.
+    private final class ProviderFlag: @unchecked Sendable {
+        var called = false
     }
 }

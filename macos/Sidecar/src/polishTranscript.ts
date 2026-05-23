@@ -17,13 +17,15 @@ export interface PolishTranscriptResult {
   polished: string;
   /** Whether Claude actually produced a different string than the input. */
   changed: boolean;
-  /** Token usage from the underlying Claude call. Camel-case for the Swift Codable. */
+  /** Token usage from the underlying Claude call. Camel-case for the Swift Codable.
+   *  Explicit `| undefined` because the tsconfig enables exactOptionalPropertyTypes —
+   *  without it, returning `undefined` for this field requires omitting the key. */
   usage?: {
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens: number;
     cacheCreationTokens: number;
-  };
+  } | undefined;
 }
 
 const SYSTEM_PROMPT = `You post-process raw dictation transcripts from Whisper. Clean the input up so it reads naturally without changing what the user said.

@@ -1,70 +1,122 @@
 @testable import Hark
 import XCTest
 
-/// `ClaudeAuth.detectMethod(env:claudeHomeExists:)` is the precedence
-/// rule that decides whether the sidecar gets OAuth or API-key auth (or
-/// neither). It's the entire surface of how Hark resolves Anthropic
-/// credentials — Anthropic ToS forbids us from redistributing
-/// subscription auth, so this gate is also the compliance boundary.
+/// `ClaudeAuth.detectMethod(env:keychainApiKey:claudeHomeExists:)` is the
+/// precedence rule that decides whether the sidecar gets API-key auth (the
+/// fast Messages API path) or subscription OAuth (the SDK path), or
+/// neither. Anthropic ToS forbids us from redistributing subscription
+/// auth, so this gate is also the compliance boundary.
 ///
-/// The pure-function shape makes it easy to exhaustively test every
-/// precedence path without touching real environment variables or the
-/// user's actual `~/.claude/` directory.
+/// Precedence (highest first):
+///   1. ANTHROPIC_API_KEY env  — explicit shell export wins
+///   2. ANTHROPIC_API_KEY keychain  — user-entered via Settings
+///   3. CLAUDE_CODE_OAUTH_TOKEN env  — subscription via env
+///   4. ~/.claude/                — subscription via Claude Code CLI install
+///
+/// Why API key beats subscription: Messages API is faster (Haiku +
+/// prompt caching) and bypasses Claude Code's settings.json permission
+/// rules that have caused silent Bash denials. If the user explicitly
+/// configured a key, they want the better path.
 final class ClaudeAuthTests: XCTestCase {
-    // MARK: - Precedence: OAuth in env wins over everything
+    // MARK: - API key (env) wins over everything
 
-    func testOAuthEnvWinsOverClaudeHome() {
+    func testApiKeyEnvWinsOverOAuthEnv() {
         let result = ClaudeAuth.detectMethod(
             env: [
-                "CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth-abc123",
-                "ANTHROPIC_API_KEY": "sk-anthropic-xyz"
+                "ANTHROPIC_API_KEY": "sk-anthropic-xyz",
+                "CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth-abc123"
             ],
+            keychainApiKey: nil,
             claudeHomeExists: true
         )
-        XCTAssertEqual(result, .subscription(source: .environment))
+        XCTAssertEqual(result, .apiKey(source: .environment))
     }
 
-    func testOAuthEnvWinsOverApiKey() {
-        let result = ClaudeAuth.detectMethod(
-            env: [
-                "CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth-abc123",
-                "ANTHROPIC_API_KEY": "sk-anthropic-xyz"
-            ],
-            claudeHomeExists: false
-        )
-        XCTAssertEqual(result, .subscription(source: .environment))
-    }
-
-    // MARK: - ~/.claude/ wins over API key
-
-    func testClaudeHomeWinsOverApiKey() {
+    func testApiKeyEnvWinsOverClaudeHome() {
         let result = ClaudeAuth.detectMethod(
             env: ["ANTHROPIC_API_KEY": "sk-anthropic-xyz"],
+            keychainApiKey: nil,
             claudeHomeExists: true
         )
-        XCTAssertEqual(result, .subscription(source: .claudeHome))
+        XCTAssertEqual(result, .apiKey(source: .environment))
     }
 
-    // MARK: - API key falls back when no subscription
-
-    func testApiKeyDetectedWhenNoSubscription() {
+    func testApiKeyEnvWinsOverKeychain() {
+        // Shell-exported key takes precedence over the saved Keychain
+        // value — matches the universal "explicit env beats persisted
+        // config" rule users expect.
         let result = ClaudeAuth.detectMethod(
-            env: ["ANTHROPIC_API_KEY": "sk-anthropic-xyz"],
+            env: ["ANTHROPIC_API_KEY": "sk-from-shell"],
+            keychainApiKey: "sk-from-settings",
             claudeHomeExists: false
         )
         XCTAssertEqual(result, .apiKey(source: .environment))
     }
 
+    // MARK: - Keychain wins over subscription paths
+
+    func testKeychainApiKeyWinsOverClaudeHome() {
+        let result = ClaudeAuth.detectMethod(
+            env: [:],
+            keychainApiKey: "sk-from-settings",
+            claudeHomeExists: true
+        )
+        XCTAssertEqual(result, .apiKey(source: .keychain))
+    }
+
+    func testKeychainApiKeyWinsOverOAuthEnv() {
+        let result = ClaudeAuth.detectMethod(
+            env: ["CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth"],
+            keychainApiKey: "sk-from-settings",
+            claudeHomeExists: false
+        )
+        XCTAssertEqual(result, .apiKey(source: .keychain))
+    }
+
+    // MARK: - Subscription paths when no API key present
+
+    func testOAuthEnvDetectedWhenNoApiKey() {
+        let result = ClaudeAuth.detectMethod(
+            env: ["CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth"],
+            keychainApiKey: nil,
+            claudeHomeExists: false
+        )
+        XCTAssertEqual(result, .subscription(source: .environment))
+    }
+
+    func testOAuthEnvWinsOverClaudeHome() {
+        let result = ClaudeAuth.detectMethod(
+            env: ["CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth"],
+            keychainApiKey: nil,
+            claudeHomeExists: true
+        )
+        XCTAssertEqual(result, .subscription(source: .environment))
+    }
+
+    func testClaudeHomeDetectedWhenNoApiKeyNoOAuthEnv() {
+        let result = ClaudeAuth.detectMethod(
+            env: [:],
+            keychainApiKey: nil,
+            claudeHomeExists: true
+        )
+        XCTAssertEqual(result, .subscription(source: .claudeHome))
+    }
+
     // MARK: - No auth → .none
 
     func testNoneWhenNothingFound() {
-        let result = ClaudeAuth.detectMethod(env: [:], claudeHomeExists: false)
+        let result = ClaudeAuth.detectMethod(
+            env: [:],
+            keychainApiKey: nil,
+            claudeHomeExists: false
+        )
         XCTAssertEqual(result, .none)
     }
 
     func testNoneWhenIrrelevantEnvVars() {
         let result = ClaudeAuth.detectMethod(
             env: ["PATH": "/usr/bin", "HOME": "/Users/test"],
+            keychainApiKey: nil,
             claudeHomeExists: false
         )
         XCTAssertEqual(result, .none)
@@ -72,24 +124,43 @@ final class ClaudeAuthTests: XCTestCase {
 
     // MARK: - Empty strings treated as missing
 
-    /// A stale `export CLAUDE_CODE_OAUTH_TOKEN=` in the user's shell rc
-    /// produces an empty-string env var — that's NOT a real credential
-    /// and the resolver must treat it as missing, NOT as a malformed
-    /// subscription that would then bypass the API-key fallback.
-    func testEmptyOAuthEnvTreatedAsMissing() {
-        let result = ClaudeAuth.detectMethod(
-            env: [
-                "CLAUDE_CODE_OAUTH_TOKEN": "",
-                "ANTHROPIC_API_KEY": "sk-anthropic-xyz"
-            ],
-            claudeHomeExists: false
-        )
-        XCTAssertEqual(result, .apiKey(source: .environment))
-    }
-
-    func testEmptyApiKeyEnvTreatedAsMissing() {
+    /// A stale `export ANTHROPIC_API_KEY=` in the user's shell rc produces
+    /// an empty-string env var. That's NOT a real credential — must fall
+    /// through to the next-priority source, NOT short-circuit detection.
+    func testEmptyApiKeyEnvFallsThroughToKeychain() {
         let result = ClaudeAuth.detectMethod(
             env: ["ANTHROPIC_API_KEY": ""],
+            keychainApiKey: "sk-from-settings",
+            claudeHomeExists: false
+        )
+        XCTAssertEqual(result, .apiKey(source: .keychain))
+    }
+
+    func testEmptyApiKeyEnvFallsThroughToOAuth() {
+        let result = ClaudeAuth.detectMethod(
+            env: [
+                "ANTHROPIC_API_KEY": "",
+                "CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth"
+            ],
+            keychainApiKey: nil,
+            claudeHomeExists: false
+        )
+        XCTAssertEqual(result, .subscription(source: .environment))
+    }
+
+    func testEmptyOAuthEnvFallsThroughToClaudeHome() {
+        let result = ClaudeAuth.detectMethod(
+            env: ["CLAUDE_CODE_OAUTH_TOKEN": ""],
+            keychainApiKey: nil,
+            claudeHomeExists: true
+        )
+        XCTAssertEqual(result, .subscription(source: .claudeHome))
+    }
+
+    func testEmptyKeychainApiKeyTreatedAsAbsent() {
+        let result = ClaudeAuth.detectMethod(
+            env: [:],
+            keychainApiKey: "",
             claudeHomeExists: false
         )
         XCTAssertEqual(result, .none)
@@ -104,6 +175,7 @@ final class ClaudeAuthTests: XCTestCase {
 
     func testIsResolvedTrueForApiKey() {
         XCTAssertTrue(ClaudeAuthMethod.apiKey(source: .environment).isResolved)
+        XCTAssertTrue(ClaudeAuthMethod.apiKey(source: .keychain).isResolved)
     }
 
     func testIsResolvedFalseForNone() {
@@ -242,17 +314,59 @@ final class ClaudeAuthTests: XCTestCase {
         XCTAssertNil(result["HARK_CLAUDE_BINARY"])
     }
 
-    /// All inputs together → all three concerns honored in one
-    /// composition. The integration test for the env-building function.
+    /// Keychain-stored API key surfaces in the sidecar's env as
+    /// `ANTHROPIC_API_KEY` so the TS-side `detectAgentAuth` picks the
+    /// Messages API path. Without this, a key the user pasted into
+    /// Settings would be invisible to the sidecar.
+    func testBuildEnvInjectsKeychainApiKey() {
+        let result = ClaudeAuth.buildSidecarEnvironment(
+            base: [:],
+            fallbackHome: nil,
+            claudeBinaryPath: nil,
+            keychainApiKey: "sk-from-settings"
+        )
+        XCTAssertEqual(result["ANTHROPIC_API_KEY"], "sk-from-settings")
+    }
+
+    /// Explicit `ANTHROPIC_API_KEY` in the base env wins over a Keychain
+    /// value. Mirrors the "shell export overrides persisted config" rule
+    /// used everywhere else; also keeps tests + CI runs (which set env
+    /// vars) deterministic regardless of what's saved in the keychain.
+    func testBuildEnvKeychainDoesNotOverrideExistingApiKey() {
+        let result = ClaudeAuth.buildSidecarEnvironment(
+            base: ["ANTHROPIC_API_KEY": "sk-from-shell"],
+            fallbackHome: nil,
+            claudeBinaryPath: nil,
+            keychainApiKey: "sk-from-settings"
+        )
+        XCTAssertEqual(result["ANTHROPIC_API_KEY"], "sk-from-shell")
+    }
+
+    /// Empty Keychain key is treated as absent — don't pollute the
+    /// sidecar's env with a misleading empty string.
+    func testBuildEnvEmptyKeychainKeyIgnored() {
+        let result = ClaudeAuth.buildSidecarEnvironment(
+            base: [:],
+            fallbackHome: nil,
+            claudeBinaryPath: nil,
+            keychainApiKey: ""
+        )
+        XCTAssertNil(result["ANTHROPIC_API_KEY"])
+    }
+
+    /// All inputs together → all concerns honored in one composition.
+    /// The integration test for the env-building function.
     func testBuildEnvCombinesAllConcerns() {
         let result = ClaudeAuth.buildSidecarEnvironment(
             base: ["PATH": "/usr/bin", "USER": "noah"],
             fallbackHome: "/Users/noah",
-            claudeBinaryPath: "/opt/homebrew/bin/claude"
+            claudeBinaryPath: "/opt/homebrew/bin/claude",
+            keychainApiKey: "sk-from-settings"
         )
         XCTAssertEqual(result["PATH"], "/usr/bin")
         XCTAssertEqual(result["USER"], "noah")
         XCTAssertEqual(result["HOME"], "/Users/noah")
         XCTAssertEqual(result["HARK_CLAUDE_BINARY"], "/opt/homebrew/bin/claude")
+        XCTAssertEqual(result["ANTHROPIC_API_KEY"], "sk-from-settings")
     }
 }

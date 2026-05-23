@@ -1,9 +1,11 @@
 import { chromeProfile } from "./chromeProfile.ts";
 import { clipboard } from "./clipboard.ts";
+import { music } from "./music.ts";
 import { normalize } from "./normalize.ts";
 import { openApp } from "./openApp.ts";
 import { openUrl } from "./openUrl.ts";
 import { screencapture } from "./screencapture.ts";
+import { search } from "./search.ts";
 import { shortcuts } from "./shortcuts.ts";
 import { asEntry, type ExecutionResult, type RegistryEntry } from "./types.ts";
 
@@ -13,9 +15,11 @@ import { asEntry, type ExecutionResult, type RegistryEntry } from "./types.ts";
  * Lower priority = more specific = runs first. Concrete ordering today:
  *
  *   10  chromeProfile   — "open X in <name> profile"
+ *   15  search          — "search <service> for <query>"
  *   20  openUrl         — "open <URL>" / "go to <site>"
  *   25  shortcuts       — "run shortcut X"
  *   30  openApp         — "open <app>"
+ *   35  music           — "play music", "next song", "pause"
  *   40  screencapture   — "take a screenshot"
  *   40  clipboard       — "copy X to clipboard"
  *
@@ -25,9 +29,11 @@ import { asEntry, type ExecutionResult, type RegistryEntry } from "./types.ts";
  */
 const ENTRIES: ReadonlyArray<RegistryEntry> = [
   asEntry(chromeProfile),
+  asEntry(search),
   asEntry(openUrl),
   asEntry(shortcuts),
   asEntry(openApp),
+  asEntry(music),
   asEntry(screencapture),
   asEntry(clipboard),
 ].sort((a, b) => a.priority - b.priority);

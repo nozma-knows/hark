@@ -138,6 +138,14 @@ private struct ClaudePane: View {
     @Bindable var auth: ClaudeAuth
     @Bindable var appState: AppState
 
+    /// Buffered user input for the API key field. Empty until the user
+    /// types something; resetting on save / clear so the field never
+    /// echoes a real key back to the screen.
+    @State private var apiKeyInput: String = ""
+    /// Surfaces a Keychain save / read failure inline instead of failing
+    /// silently. Cleared on the next successful action.
+    @State private var apiKeyError: String?
+
     var body: some View {
         Form {
             Section("Auth") {
@@ -159,25 +167,78 @@ private struct ClaudePane: View {
                 .padding(.vertical, 4)
             }
 
-            if !auth.method.isResolved {
-                Section("Get set up") {
-                    if auth.claudeBinaryPath != nil {
-                        Button("Generate OAuth token in Terminal") {
-                            auth.runSetupToken()
+            Section {
+                if auth.hasKeychainApiKey {
+                    HStack {
+                        Label("API key saved in Keychain", systemImage: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                        Spacer()
+                        Button("Clear", role: .destructive) {
+                            apiKeyError = nil
+                            try? auth.setApiKey(nil)
+                            apiKeyInput = ""
                         }
-                        .buttonStyle(.borderedProminent)
-                        Text("Sign in with Anthropic in your browser; the token lands in ~/.claude/, Hark picks it up.")
+                        .buttonStyle(.bordered)
+                    }
+                }
+
+                SecureField(
+                    auth.hasKeychainApiKey ? "Replace existing key…" : "sk-ant-…",
+                    text: $apiKeyInput
+                )
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+
+                HStack {
+                    if let apiKeyError {
+                        Text(apiKeyError)
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Link("Install Claude Code", destination: claudeCodeURL)
-                            .controlSize(.regular)
-                        Text(
-                            "Or export ANTHROPIC_API_KEY in your shell, then Refresh. Hark never stores tokens itself."
-                        )
+                            .foregroundStyle(.red)
+                    }
+                    Spacer()
+                    Button("Save") {
+                        saveApiKey()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(apiKeyInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Text("Anthropic API key")
+            } footer: {
+                Text(
+                    """
+                    Stored in your macOS login keychain. When set, Hark uses \
+                    the Messages API (Haiku 4.5 + prompt caching) — faster \
+                    and unaffected by Claude Code's local settings.json. \
+                    Get a key at console.anthropic.com.
+                    """
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            }
+
+            if auth.method == .none, auth.claudeBinaryPath != nil {
+                Section("Or use a Claude subscription") {
+                    Button("Generate OAuth token in Terminal") {
+                        auth.runSetupToken()
+                    }
+                    .buttonStyle(.bordered)
+                    Text(
+                        """
+                        Sign in with Anthropic in your browser; the token \
+                        lands in ~/.claude/, Hark picks it up on Refresh.
+                        """
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                }
+            } else if auth.method == .none {
+                Section("Or use a Claude subscription") {
+                    Link("Install Claude Code", destination: claudeCodeURL)
+                        .controlSize(.regular)
+                    Text("Then run `claude setup-token` and Refresh.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    }
                 }
             }
 
@@ -209,6 +270,21 @@ private struct ClaudePane: View {
 
     private func formatted(_ value: Int) -> String {
         value.formatted(.number.grouping(.automatic))
+    }
+
+    /// Persist the typed key, reset the field, and surface any Keychain
+    /// failure inline. AppDelegate's `onCredentialsChanged` callback
+    /// restarts the sidecar so the next request uses the new auth path.
+    private func saveApiKey() {
+        let trimmed = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try auth.setApiKey(trimmed)
+            apiKeyError = nil
+            apiKeyInput = ""
+        } catch {
+            apiKeyError = error.localizedDescription
+        }
     }
 
     private var statusIcon: String {
@@ -372,8 +448,6 @@ private struct ModelRow: View {
         ByteCountFormatter.string(fromByteCount: model.approximateBytes, countStyle: .file)
     }
 }
-
-// MARK: - Usage row helper
 
 private struct UsageRow: View {
     let label: String

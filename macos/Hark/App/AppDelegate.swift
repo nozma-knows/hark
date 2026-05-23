@@ -119,6 +119,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         permissions.onPermissionGranted = { [weak self] in
             self?.hotkey.installIfNeeded()
         }
+
+        // Restart the sidecar when the user saves or clears an API key in
+        // Settings. The sidecar caches the AgentClient at spawn time based
+        // on the env it was launched with — without the restart, a new key
+        // wouldn't activate the Messages API path until the user quit and
+        // relaunched Hark.
+        claudeAuth.onCredentialsChanged = { [weak self] in
+            self?.sidecar.stop()
+        }
     }
 
     func applicationDidFinishLaunching(_: Notification) {

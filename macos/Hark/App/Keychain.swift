@@ -68,7 +68,7 @@ enum Keychain {
                 kSecAttrService as String: service,
                 kSecAttrAccount as String: account,
                 kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitOne,
+                kSecMatchLimit as String: kSecMatchLimitOne
             ]
             var item: CFTypeRef?
             let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -88,7 +88,7 @@ enum Keychain {
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
+                kSecAttrAccount as String: account
             ]
             let updateAttrs: [String: Any] = [kSecValueData as String: data]
             let updateStatus = SecItemUpdate(query as CFDictionary, updateAttrs as CFDictionary)
@@ -107,7 +107,7 @@ enum Keychain {
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
                 kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
+                kSecAttrAccount as String: account
             ]
             // errSecItemNotFound is fine; anything else we ignore at this
             // layer (caller will refresh state and see the entry's still

@@ -24,7 +24,7 @@ final class ClaudeAuthTests: XCTestCase {
         let result = ClaudeAuth.detectMethod(
             env: [
                 "ANTHROPIC_API_KEY": "sk-anthropic-xyz",
-                "CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth-abc123",
+                "CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth-abc123"
             ],
             keychainApiKey: nil,
             claudeHomeExists: true
@@ -140,7 +140,7 @@ final class ClaudeAuthTests: XCTestCase {
         let result = ClaudeAuth.detectMethod(
             env: [
                 "ANTHROPIC_API_KEY": "",
-                "CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth",
+                "CLAUDE_CODE_OAUTH_TOKEN": "sk-oauth"
             ],
             keychainApiKey: nil,
             claudeHomeExists: false

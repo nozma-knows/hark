@@ -148,6 +148,17 @@ private func nsColor(_ hex: String) -> NSColor {
 ///   - 1024 canvas, ~100px transparent margin (Apple production grid)
 ///   - squircle cornerRadius = 22.37% of squircle width
 ///   - artwork inset 18% inside the squircle so the H clears the corners
+///
+/// Liquid Glass simulation: native Tahoe Liquid Glass is produced by the
+/// system shader on `.icon` bundles emitted by Icon Composer (Xcode 26+).
+/// We don't have that tool from a CLI script — instead, we approximate the
+/// look on a static PNG with three painted-on cues that match the real
+/// effect's geometry:
+///   1. Specular highlight band across the upper third (light source above)
+///   2. Hairline rim sheen on the squircle edge (catches the same light)
+///   3. Soft inner shadow inside the bottom edge (depth / glass thickness)
+/// Order is critical: tint mark sits BETWEEN the white substrate and the
+/// glass overlay so the highlight crosses the H without washing it out.
 private struct IconCanvas: View {
     let source: NSImage
     let background: Color
@@ -160,19 +171,86 @@ private struct IconCanvas: View {
             let inner = s - 2 * outerPad
             let radius = inner * 0.2237
             let artPadding = inner * 0.18
+            let squircle = RoundedRectangle(cornerRadius: radius, style: .continuous)
 
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(background)
-                .overlay(
-                    Image(nsImage: source)
-                        .renderingMode(.template)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                        .foregroundStyle(tint)
-                        .padding(artPadding)
-                )
-                .padding(outerPad)
+            ZStack {
+                // 1. White substrate. Slight top-to-bottom tonal shift so
+                //    the bottom edge has something for the inner shadow to
+                //    sit against — pure #FFFFFF top, ~#F3F4F6 bottom.
+                squircle
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(white: 1.0),
+                                Color(white: 0.955)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                // 2. The H mark itself.
+                Image(nsImage: source)
+                    .renderingMode(.template)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+                    .foregroundStyle(tint)
+                    .padding(artPadding)
+                    .mask(squircle)
+
+                // 3. Specular highlight — bright band across the upper
+                //    third, falling off toward the middle. Reads as light
+                //    hitting curved glass.
+                squircle
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .white.opacity(0.55), location: 0.0),
+                                .init(color: .white.opacity(0.18), location: 0.35),
+                                .init(color: .clear, location: 0.55)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .blendMode(.screen)
+
+                // 4. Inner-edge rim sheen. Thin highlight on the top-left
+                //    quadrant where light grazes the squircle radius.
+                squircle
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                .white.opacity(0.85),
+                                .white.opacity(0.2),
+                                .clear,
+                                .black.opacity(0.05)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: max(1, inner * 0.005)
+                    )
+
+                // 5. Bottom inner shadow — soft darkening inside the lower
+                //    edge so the icon reads as glass with depth, not paper.
+                squircle
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0.65),
+                                .init(color: .black.opacity(0.06), location: 0.92),
+                                .init(color: .black.opacity(0.10), location: 1.0)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .blendMode(.multiply)
+            }
+            .frame(width: inner, height: inner)
+            .padding(outerPad)
         }
     }
 }

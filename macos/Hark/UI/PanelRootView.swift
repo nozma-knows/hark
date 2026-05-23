@@ -27,12 +27,12 @@ struct PanelRootView: View {
     }
 
     @ViewBuilder private var content: some View {
-        switch derived {
+        switch mode {
         case .recording:
-            RecordingPill(recorder: recorder, isCommandMode: isCommandMode, actions: actions)
+            RecordingPill(recorder: recorder, isCommandMode: false, actions: actions)
                 .transition(.scale.combined(with: .opacity))
         case let .processing(label):
-            ProcessingPill(label: label)
+            ProcessingPill(label: label, actions: actions)
                 .transition(.scale.combined(with: .opacity))
         case let .transcript(text):
             TranscriptPill(text: text, appState: appState)
@@ -46,52 +46,17 @@ struct PanelRootView: View {
         }
     }
 
-    private enum Derived: Equatable {
-        case idle
-        case recording
-        case processing(label: String)
-        case transcript(String)
-        case commandResult(AppState.CommandResult)
-    }
-
-    /// True while the active hotkey gesture is `.command` — used by the
-    /// RecordingPill to render the "Command" chip instead of the dictation
-    /// indicator.
-    private var isCommandMode: Bool {
-        // The HotkeyManager owns the live trigger; we can't see it directly
-        // from here, but during a `.command` recording the appState's
-        // isExecutingCommand will be false (we're still recording) and the
-        // trigger gets surfaced through AppDelegate. For now we infer mode
-        // from the appState surface — keeps PanelRootView decoupled from
-        // HotkeyManager. (No false positives because the pill only shows
-        // command-mode chip during an active recording.)
-        false
-    }
-
-    private var derived: Derived {
-        if recorder.state == .recording { return .recording }
-        if case .transcribing = transcriber.state {
-            return .processing(label: "Transcribing")
-        }
-        if appState.isExecutingCommand {
-            return .processing(label: "Executing")
-        }
-        if appState.isPolishing {
-            return .processing(label: "Polishing")
-        }
-        if case .loading = transcriber.state {
-            return .processing(label: "Loading model")
-        }
-        if case let .downloading(_, progress) = transcriber.state {
-            return .processing(label: "Downloading · \(Int(progress * 100))%")
-        }
-        if let result = appState.commandResult {
-            return .commandResult(result)
-        }
-        if let text = appState.transcript, !text.isEmpty {
-            return .transcript(text)
-        }
-        return .idle
+    /// Pure-function derivation lives in PanelViewModel so it's testable.
+    /// This view stays thin: observe inputs, render the mode.
+    private var mode: PanelViewModel.Mode {
+        PanelViewModel.mode(
+            recorderState: recorder.state,
+            transcriberState: transcriber.state,
+            isExecutingCommand: appState.isExecutingCommand,
+            isPolishing: appState.isPolishing,
+            commandResult: appState.commandResult,
+            transcript: appState.transcript
+        )
     }
 }
 
@@ -160,6 +125,7 @@ private struct RecordingPill: View {
 
 private struct ProcessingPill: View {
     let label: String
+    let actions: PanelActions
 
     var body: some View {
         HStack(spacing: 8) {
@@ -170,6 +136,21 @@ private struct ProcessingPill: View {
             Text(label)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
+            // Escape hatch: any stuck Whisper / polish / execute step can be
+            // killed from here without quitting Hark. Without this affordance
+            // a hung transcribe would wedge the pill until the timeout fired
+            // (or forever, if the timeout itself was wedged).
+            Button {
+                actions.cancelProcessing()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Cancel")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -309,7 +290,7 @@ private struct MiniBars: View {
         appState: AppState(),
         recorder: AudioRecorder(),
         transcriber: Transcriber(),
-        actions: PanelActions(toggleRecording: { _ in })
+        actions: PanelActions(toggleRecording: { _ in }, cancelProcessing: {})
     )
     .frame(width: 600, height: 120)
     .background(.gray.opacity(0.2))

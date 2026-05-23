@@ -11,4 +11,8 @@ struct PanelActions {
     /// the user expectation that "click record again" always stops). If not
     /// recording, starts a new recording in the trigger's mode.
     let toggleRecording: (HotkeyTrigger) -> Void
+    /// Force-abort whatever post-recording step is currently running
+    /// (transcribe / polish / executeCommand). Resets the pill to idle so
+    /// the user can recover from a hung Whisper or Claude call.
+    let cancelProcessing: () -> Void
 }

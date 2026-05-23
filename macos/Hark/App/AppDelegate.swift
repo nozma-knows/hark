@@ -22,6 +22,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let sidecar: AgentSidecar
     let panelController: PanelWindowController
     let onboardingController: OnboardingWindowController
+    let orchestrator: RecordingOrchestrator
+    let updater: UpdateManager
+
+    /// Opaque tokens for every NotificationCenter observer we install. We
+    /// hold them so `deinit` can tear them down explicitly — without this,
+    /// observers fire on a freed AppDelegate after app teardown (the runtime
+    /// keeps the closures alive and they reach into nil `self` references).
+    /// In practice AppDelegate lives until process exit, but keeping the
+    /// pattern correct here documents the right way for future managers.
+    ///
+    /// `nonisolated(unsafe)` because `deinit` runs in a nonisolated context
+    /// under Swift 6 strict concurrency — we can't access `@MainActor`
+    /// storage from there. Safe in practice: append-only from MainActor
+    /// during launch; read-only from deinit at teardown; no concurrent
+    /// access possible.
+    nonisolated(unsafe) private var notificationTokens: [NSObjectProtocol] = []
 
     override init() {
         let state = AppState()
@@ -35,6 +51,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 claudeAuthInstance.sidecarEnvironment()
             }
         )
+        let onboarding = OnboardingWindowController(
+            permissions: perms,
+            claudeAuth: claudeAuthInstance
+        )
         appState = state
         permissions = perms
         hotkey = hotkeyManager
@@ -42,6 +62,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         transcriber = transcriberInstance
         claudeAuth = claudeAuthInstance
         sidecar = sidecarInstance
+        onboardingController = onboarding
+        updater = UpdateManager()
+        // Orchestrator owns the recording → transcribe → deliver pipeline.
+        // AppDelegate is now just AppKit glue: construct, hand-off, listen
+        // for activation notifications.
+        orchestrator = RecordingOrchestrator(
+            appState: state,
+            hotkey: hotkeyManager,
+            recorder: audioRecorder,
+            transcriber: transcriberInstance,
+            sidecar: sidecarInstance,
+            permissions: perms,
+            needsOnboarding: { [onboarding] in onboarding.show() }
+        )
         // Construct AppDelegate first, then wire the panel actions in
         // applicationDidFinishLaunching (closures need `self`, which we can't
         // capture before super.init()).
@@ -49,28 +83,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             appState: state,
             recorder: audioRecorder,
             transcriber: transcriberInstance,
-            actions: PanelActions(toggleRecording: { _ in /* wired below */ })
-        )
-        onboardingController = OnboardingWindowController(
-            permissions: perms,
-            claudeAuth: claudeAuthInstance
+            actions: PanelActions(
+                toggleRecording: { _ in /* wired below */ },
+                cancelProcessing: { /* wired below */ }
+            )
         )
         super.init()
-
-        hotkey.onKeyDown = { [weak self] trigger in self?.handleHotkeyDown(trigger) }
-        hotkey.onKeyUp = { [weak self] trigger in self?.handleHotkeyUp(trigger) }
-        panelController.actions = PanelActions(
-            toggleRecording: { [weak self] trigger in self?.togglePanelRecording(trigger) }
-        )
+        wireCallbacks()
     }
 
-    @ObservationIgnored private var activeTrigger: HotkeyTrigger = .dictate
-    /// Set when the pill UI (record button or menu item) initiates a recording;
-    /// nil for hotkey-driven recordings. Read on stop to decide which trigger
-    /// the finalize step should use.
-    @ObservationIgnored private var manualRecordingTrigger: HotkeyTrigger?
+    /// Plumbs the orchestrator, hotkey, panel, and permissions together.
+    /// Extracted from `init` so the initializer stays under SwiftLint's
+    /// function_body_length threshold; the work is purely "after super.init,
+    /// hook up the live closures" — no construction state needed.
+    private func wireCallbacks() {
+        let captured = orchestrator
+        hotkey.onKeyDown = { trigger in
+            Task { @MainActor in captured.handleHotkeyDown(trigger) }
+        }
+        hotkey.onKeyUp = { trigger in
+            Task { @MainActor in captured.handleHotkeyUp(trigger) }
+        }
+        panelController.actions = PanelActions(
+            toggleRecording: { trigger in
+                Task { @MainActor in captured.togglePanelRecording(trigger) }
+            },
+            cancelProcessing: {
+                Task { @MainActor in captured.cancelProcessing() }
+            }
+        )
+        // Auto-install / re-enable the global hotkey tap the instant the
+        // user flips Accessibility or Input Monitoring in System Settings.
+        // Removes the "now restart Hark" instruction from the permission
+        // recovery flow.
+        permissions.onPermissionGranted = { [weak self] in
+            self?.hotkey.installIfNeeded()
+        }
+    }
 
     func applicationDidFinishLaunching(_: Notification) {
+        // Install crash capture FIRST. Any subsequent fatal signal /
+        // uncaught exception during the rest of startup will produce a
+        // .log under ~/Library/Logs/Hark/crashes/ that we can ask the
+        // user to attach to a bug report.
+        CrashReporter.install()
+
+        // First line of the file log: marks launch boundary so support
+        // bundles always have a clear "this is where this session started"
+        // anchor when the user reports a bug from a long-running install.
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        FileLogger.shared.log(.info, category: "AppDelegate", "Hark \(version) launched (pid=\(getpid()))")
+
         // Hark is a regular dock app (Wispr Flow-style). LSUIElement is
         // false in Info.plist so the icon shows up in the Dock.
         NSApp.setActivationPolicy(.regular)
@@ -79,30 +142,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // bottom-center indicator.
         panelController.showAlways()
 
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            // Permissions and Claude auth can flip silently while the user is
-            // in System Settings / Terminal; re-poll on foreground return.
-            // Also retry installing the global-hotkey event tap if it failed
-            // at launch because Accessibility hadn't been granted yet —
-            // saves the user from needing to manually relaunch Hark.
-            MainActor.assumeIsolated {
-                self?.permissions.refresh()
-                self?.claudeAuth.refresh()
-                self?.hotkey.installIfNeeded()
+        notificationTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                // Permissions and Claude auth can flip silently while the
+                // user is in System Settings / Terminal; re-poll on
+                // foreground return. Also retry installing the global-hotkey
+                // event tap if it failed at launch because Accessibility
+                // hadn't been granted yet — saves the user from needing to
+                // manually relaunch Hark.
+                MainActor.assumeIsolated {
+                    self?.permissions.refresh()
+                    self?.claudeAuth.refresh()
+                    self?.hotkey.installIfNeeded()
+                }
             }
-        }
+        )
 
-        NotificationCenter.default.addObserver(
-            forName: .openHarkSettings,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.openSettingsWindow() }
-        }
+        notificationTokens.append(
+            NotificationCenter.default.addObserver(
+                forName: .openHarkSettings,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.openSettingsWindow() }
+            }
+        )
 
         onboardingController.showIfNeeded()
 
@@ -112,205 +180,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         transcriber.bootstrap()
     }
 
-    // MARK: - Hotkey state machine
-
-    private func handleHotkeyDown(_ trigger: HotkeyTrigger) {
-        guard ensureReady() else { return }
-        // Any Fn-press while a recording is in progress stops it — regardless
-        // of whether the recording was started via hotkey or pill click, and
-        // regardless of hold/toggle mode. Without this branch, HOLD mode tries
-        // to start a SECOND recording (which silently fails inside
-        // AudioRecorder) and the existing one becomes unstoppable from the
-        // keyboard.
-        if recorder.state == .recording {
-            stopRecording()
-            return
-        }
-        startRecording(trigger: trigger)
-    }
-
-    private func handleHotkeyUp(_: HotkeyTrigger) {
-        guard hotkey.mode == .hold, recorder.state == .recording else { return }
-        // Don't stop a recording the pill explicitly started — the user must
-        // click the record button to end it.
-        guard manualRecordingTrigger == nil else { return }
-        stopRecording()
-    }
-
-    /// Pill UI entry point: click-to-toggle recording. The selected mode
-    /// (.dictate / .insert / .command) is preserved through the finalize
-    /// step, regardless of which Fn modifiers happen to be down.
-    func togglePanelRecording(_ trigger: HotkeyTrigger) {
-        guard ensureReady() else { return }
-        if recorder.state == .recording {
-            stopRecording()
-        } else {
-            manualRecordingTrigger = trigger
-            startRecording(trigger: trigger)
-        }
-    }
-
-    private func startRecording(trigger: HotkeyTrigger) {
-        activeTrigger = trigger
-        appState.transcript = nil
-        appState.transcriptInsertFailed = false
-        do {
-            try recorder.start()
-        } catch {
-            Self.logger.error("Failed to start recording: \(String(describing: error), privacy: .public)")
-        }
-    }
-
-    private func stopRecording() {
-        let samples = recorder.stop()
-        guard !samples.isEmpty else { return }
-        // For pill-initiated recordings, use the trigger that was selected at
-        // start (the user explicitly chose Execute / Fill input / dictate via
-        // the UI). For hotkey-driven recordings, use the LIVE trigger at
-        // release time — lets the user add/remove Ctrl mid-press and the
-        // resulting action matches what they were holding when they let go.
-        let trigger = manualRecordingTrigger ?? hotkey.currentTrigger
-        manualRecordingTrigger = nil
-        Self.logger.info("stopRecording with trigger: \(String(describing: trigger), privacy: .public)")
-        Task { [weak self] in
-            await self?.finalizeTranscript(samples, trigger: trigger)
-        }
-    }
-
-    private func finalizeTranscript(_ samples: [Float], trigger: HotkeyTrigger) async {
-        do {
-            let raw = try await transcriber.transcribe(samples: samples)
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-
-            switch trigger {
-            case .command:
-                // Voice command: skip the polish step (Claude is going to
-                // interpret intent anyway) and send straight to executeCommand.
-                await executeVoiceCommand(trimmed)
-
-            case .dictate, .insert:
-                // Polish via Claude before delivering. Falls back to raw on
-                // any failure so dictation always produces something.
-                appState.isPolishing = true
-                let text = await polishOrFallback(trimmed)
-                appState.isPolishing = false
-
-                if trigger == .insert {
-                    let hasInput = InputInserter.hasFocusedTextInput()
-                    Self.logger.info("Insert mode: hasFocusedInput=\(hasInput, privacy: .public)")
-                    if hasInput {
-                        InputInserter.paste(text)
-                    } else {
-                        appState.transcript = text
-                        appState.transcriptInsertFailed = true
-                    }
-                } else {
-                    appState.transcript = text
-                }
-            }
-        } catch {
-            appState.isPolishing = false
-            appState.isExecutingCommand = false
-            Self.logger.error("Transcribe failed: \(String(describing: error), privacy: .public)")
-        }
-    }
-
-    /// Send the transcript to the Agent SDK in the sidecar; it drives Bash
-    /// to perform a macOS action (open app, run AppleScript, run Shortcut).
-    /// Shows live state in the pill (isExecutingCommand → commandResult).
-    private func executeVoiceCommand(_ transcript: String) async {
-        struct Params: Encodable { let transcript: String }
-        struct Usage: Decodable {
-            let inputTokens: Int?
-            let outputTokens: Int?
-            let cacheReadTokens: Int?
-            let cacheCreationTokens: Int?
-        }
-        struct Result: Decodable {
-            let summary: String
-            let succeeded: Bool
-            let usage: Usage?
-        }
-
-        appState.isExecutingCommand = true
-        defer { appState.isExecutingCommand = false }
-
-        do {
-            let result: Result = try await sidecar.request(
-                method: "executeCommand",
-                params: Params(transcript: transcript),
-                result: Result.self
-            )
-            if let usage = result.usage {
-                var stats = appState.claudeUsage
-                stats.add(
-                    input: usage.inputTokens ?? 0,
-                    output: usage.outputTokens ?? 0,
-                    cacheRead: usage.cacheReadTokens ?? 0,
-                    cacheCreation: usage.cacheCreationTokens ?? 0
-                )
-                stats.save()
-                appState.claudeUsage = stats
-            }
-            appState.commandResult = .init(summary: result.summary, succeeded: result.succeeded)
-            // Auto-clear the result after a few seconds so the pill returns
-            // to its idle state without the user dismissing.
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(5))
-                guard let self else { return }
-                if appState.commandResult?.summary == result.summary {
-                    appState.commandResult = nil
-                }
-            }
-        } catch {
-            let detail = String(describing: error)
-            Self.logger.error("executeCommand failed: \(detail, privacy: .public)")
-            appState.commandResult = .init(
-                summary: "Command failed: \(error.localizedDescription)",
-                succeeded: false
-            )
-        }
-    }
-
-    /// Send the trimmed Whisper output to Claude (via the Bun sidecar) for
-    /// punctuation / casing / filler cleanup. Returns the polished string,
-    /// or the raw input unchanged on any failure. Side-effect: accumulates
-    /// usage stats into `appState.claudeUsage` (persisted).
-    private func polishOrFallback(_ raw: String) async -> String {
-        struct Params: Encodable { let text: String }
-        struct Usage: Decodable {
-            let inputTokens: Int?
-            let outputTokens: Int?
-            let cacheReadTokens: Int?
-            let cacheCreationTokens: Int?
-        }
-        struct Result: Decodable {
-            let polished: String
-            let changed: Bool
-            let usage: Usage?
-        }
-        do {
-            let result: Result = try await sidecar.request(
-                method: "polishTranscript",
-                params: Params(text: raw),
-                result: Result.self
-            )
-            if let usage = result.usage {
-                var stats = appState.claudeUsage
-                stats.add(
-                    input: usage.inputTokens ?? 0,
-                    output: usage.outputTokens ?? 0,
-                    cacheRead: usage.cacheReadTokens ?? 0,
-                    cacheCreation: usage.cacheCreationTokens ?? 0
-                )
-                stats.save()
-                appState.claudeUsage = stats
-            }
-            return result.polished
-        } catch {
-            Self.logger.error("Polish failed (using raw): \(String(describing: error), privacy: .public)")
-            return raw
+    deinit {
+        // Tear down every observer token we installed in
+        // `applicationDidFinishLaunching`. Without this, the closures
+        // outlive AppDelegate and fire on its zeroed-out memory if the
+        // system posts a late notification. AppDelegate normally lives
+        // until process exit so this is defensive, but the discipline
+        // matters for future managers that DO get torn down mid-run.
+        for token in notificationTokens {
+            NotificationCenter.default.removeObserver(token)
         }
     }
 
@@ -323,17 +201,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.logger.info("openSettingsWindow invoked")
         NSApp.activate(ignoringOtherApps: true)
 
-        // Path A: re-focus an already-open Settings window.
-        let existing = NSApp.windows.first(where: { window in
-            let id = window.identifier?.rawValue.lowercased() ?? ""
-            let title = window.title.lowercased()
-            let isSettings = id.contains("settings") || title == "settings"
-                || id.contains("preferences") || title == "preferences"
-            return isSettings && window.isVisible == false || isSettings
-        })
-        if let existing {
-            Self.logger.info("Re-focusing existing Settings window: \(existing.title, privacy: .public)")
-            existing.makeKeyAndOrderFront(nil)
+        let candidates = NSApp.windows.map { window in
+            Self.WindowDescriptor(
+                identifier: window.identifier?.rawValue,
+                title: window.title,
+                isVisible: window.isVisible
+            )
+        }
+        if let index = Self.indexOfSettingsWindow(in: candidates) {
+            let window = NSApp.windows[index]
+            Self.logger.info("Re-focusing existing Settings window: \(window.title, privacy: .public)")
+            window.makeKeyAndOrderFront(nil)
             return
         }
 
@@ -347,14 +225,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Common precondition for any action that needs mic + accessibility.
-    /// Routes to onboarding if anything's missing and returns false.
-    private func ensureReady() -> Bool {
-        permissions.refresh()
-        guard permissions.allGranted else {
-            onboardingController.show()
-            return false
-        }
-        return true
+    /// Pure-function variant of "find the Settings window" — takes a
+    /// descriptor of every open window and returns the index of the
+    /// first one that matches our settings-recognition rules. Extracted
+    /// so the recognition logic can be tested without touching `NSApp`.
+    struct WindowDescriptor: Equatable {
+        let identifier: String?
+        let title: String
+        let isVisible: Bool
+    }
+
+    /// Recognize a SwiftUI Settings (or older "Preferences") window from
+    /// its identifier + title. SwiftUI's Settings scene gives the window
+    /// either identifier "Settings" or title "Settings"; older macOS
+    /// terminology uses "Preferences."
+    nonisolated static func indexOfSettingsWindow(in windows: [WindowDescriptor]) -> Int? {
+        windows.firstIndex(where: { window in
+            let id = window.identifier?.lowercased() ?? ""
+            let title = window.title.lowercased()
+            return id.contains("settings") || title == "settings"
+                || id.contains("preferences") || title == "preferences"
+        })
     }
 }

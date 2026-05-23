@@ -42,7 +42,22 @@ struct HarkApp: App {
                 hotkey: delegate.hotkey,
                 transcriber: delegate.transcriber,
                 claudeAuth: delegate.claudeAuth,
-                appState: delegate.appState
+                appState: delegate.appState,
+                onResetConversation: { [sidecar = delegate.sidecar] in
+                    // Fire-and-forget: the sidecar's resetConversation
+                    // handler is a single store.clear() call that never
+                    // fails meaningfully. If the sidecar is down, the
+                    // ring buffer is already empty (process restart
+                    // clears it), so a swallowed error here is correct
+                    // behavior.
+                    Task { @MainActor in
+                        struct ResetResult: Decodable { let cleared: Bool }
+                        _ = try? await sidecar.request(
+                            method: "resetConversation",
+                            result: ResetResult.self
+                        )
+                    }
+                }
             )
         }
     }

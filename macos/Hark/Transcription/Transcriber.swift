@@ -31,6 +31,13 @@ final class Transcriber {
 
     private(set) var state: State = .unloaded
 
+    /// Wall-clock when the current load began, or nil when not loading.
+    /// Set on entering `.loading`, cleared on `.ready`/`.failed`. The
+    /// panel reads this to decide whether to show the "Warming up
+    /// Whisper…" pill — only fires when load exceeds `PanelViewModel.
+    /// loadingIndicatorGrace`, so quick warm-cache loads stay invisible.
+    private(set) var loadingStartedAt: Date?
+
     /// Model the user has chosen to use. Persisted across launches.
     /// Mutate via `select(_:)` to also trigger download/load.
     private(set) var selectedModel: WhisperModel = {
@@ -102,6 +109,7 @@ final class Transcriber {
             }
 
             state = .loading(model)
+            loadingStartedAt = Date()
             // `prewarm: true` + `load: true` force all CoreML model loading
             // (MelSpectrogram, AudioEncoder, TextDecoder) to happen here at
             // init time. Without these, WhisperKit lazy-loads the models
@@ -121,11 +129,13 @@ final class Transcriber {
             whisperKit = kit
             loadedModel = model
             state = .ready(model)
+            loadingStartedAt = nil
             Self.logger.info("Loaded model \(model.variant, privacy: .public)")
         } catch {
             let message = String(describing: error)
             Self.logger.error("Model load failed: \(message, privacy: .public)")
             state = .failed(message)
+            loadingStartedAt = nil
         }
     }
 

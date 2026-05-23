@@ -19,6 +19,9 @@ hark/
 │   │   ├── Resources/        Assets.xcassets, AppIcon.icns, bundled sidecar
 │   │   └── Generated/        Info.plist (xcodegen output, gitignored)
 │   ├── Sidecar/              TypeScript Bun sidecar source
+│   │   └── src/
+│   │       ├── dispatch/     Deterministic voice-command dispatchers
+│   │       └── llm/          Hybrid LLM transport (Messages API + SDK)
 │   ├── Tests/HarkTests/      XCTest unit + integration tests
 │   ├── scripts/              build-sidecar.sh, release.sh, notarize.sh, etc.
 │   ├── Signing/              Hark.entitlements, ExportOptions.plist
@@ -115,7 +118,19 @@ Error envelope (`ok:false`):
 Methods:
 - `ping` — liveness check with echo
 - `polishTranscript` — punctuation/casing/filler cleanup via Claude (8s timeout)
-- `executeCommand` — voice command interpretation via Claude Agent SDK (60s timeout)
+- `executeCommand` — voice command → macOS action, two-tier (60s timeout):
+    1. **Dispatcher path** (`Sidecar/src/dispatch/`) — deterministic match
+       on the common 90% of voice commands (open app, open url, chrome
+       profile routing, shortcuts, screencapture, clipboard). Sub-100ms,
+       free, bypasses the LLM entirely.
+    2. **LLM fallback** (`Sidecar/src/llm/`) — for anything the
+       dispatchers don't claim. Hybrid auth: `MessagesClient` (Anthropic
+       Messages API + Haiku 4.5 + prompt caching) when `ANTHROPIC_API_KEY`
+       is set; `SdkClient` (Claude Agent SDK) when the user authenticates
+       via Claude Code subscription OAuth. Both verify a Bash tool call
+       actually fired before returning `succeeded: true` — catches the
+       "Claude Code denied Bash via settings.json, model narrated fake
+       success" failure mode.
 
 The Swift side (`AgentSidecar.swift`) handles per-request timeouts via `Task.detached` racing against the response continuation. Sidecar crashes auto-respawn on the next request.
 

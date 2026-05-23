@@ -5,6 +5,12 @@ import SwiftUI
 struct IdlePillView: View {
     let actions: PanelActions
     @Bindable var recorder: AudioRecorder
+    /// Shared with RecordingPill so the visible capsule animates its size
+    /// smoothly when transitioning hover ↔ recording (instead of two
+    /// independent views fading in and out).
+    let backgroundNamespace: Namespace.ID
+    @Environment(\.openSettings)
+    private var openSettings
     @State private var pillHovered = false
     @State private var helpHovered = false
     @State private var popoverHovered = false
@@ -22,8 +28,12 @@ struct IdlePillView: View {
 
     private static let collapsedWidth: CGFloat = 40
     private static let collapsedHeight: CGFloat = 3
-    private static let expandedWidth: CGFloat = 156
-    private static let expandedHeight: CGFloat = 24
+    // Expanded geometry lives in `PanelLayout` so RecordingPill matches
+    // exactly — no visible resize when the user transitions hover →
+    // recording. Compact 112×24 fits record + chevron on the left,
+    // gear + ? on the right, with a small breathing gap between.
+    private static let expandedWidth: CGFloat = PanelLayout.expandedWidth
+    private static let expandedHeight: CGFloat = PanelLayout.expandedHeight
     /// Brief grace period when the cursor leaves the pill / help button /
     /// popover. Lets the user move between them without dropping the open
     /// state in the gap.
@@ -53,7 +63,11 @@ struct IdlePillView: View {
 
     var body: some View {
         ZStack {
-            // Background fades in
+            // Background fades in. matchedGeometryEffect ties this capsule
+            // to the one in RecordingPill so SwiftUI interpolates frame +
+            // position between the two states (hover 112pt ↔ recording
+            // 76pt) — smooth shrink/grow on the transition instead of a
+            // cross-fade.
             Capsule(style: .continuous)
                 .fill(.black.opacity(isEngaged ? 0.82 : 0))
                 .overlay(
@@ -61,6 +75,7 @@ struct IdlePillView: View {
                         .stroke(.white.opacity(isEngaged ? 0.1 : 0), lineWidth: 0.5)
                 )
                 .shadow(color: .black.opacity(isEngaged ? 0.45 : 0), radius: 10, y: 3)
+                .matchedGeometryEffect(id: "pill", in: backgroundNamespace)
 
             // Outline fades out — the only thing visible at rest.
             Capsule(style: .continuous)
@@ -71,7 +86,30 @@ struct IdlePillView: View {
             HStack(spacing: 0) {
                 RecordMenu(actions: actions, isRecording: isRecording)
                 Spacer(minLength: 6)
-                SettingsLink {
+                Button {
+                    // Pill lives in a non-activating NSPanel, so we have to
+                    // activate the app explicitly — otherwise SwiftUI's
+                    // openSettings() creates / focuses the Settings window
+                    // but it stays BEHIND whatever app is currently
+                    // foreground. Activate first, then open the scene, then
+                    // belt-and-suspenders walk the windows list to order any
+                    // already-open Settings window to the front.
+                    NSApp.activate(ignoringOtherApps: true)
+                    openSettings()
+                    DispatchQueue.main.async {
+                        for window in NSApp.windows {
+                            let id = window.identifier?.rawValue.lowercased() ?? ""
+                            let title = window.title.lowercased()
+                            let isSettings = id.contains("settings")
+                                || id.contains("preferences")
+                                || title == "settings"
+                                || title == "preferences"
+                            if isSettings {
+                                window.makeKeyAndOrderFront(nil)
+                            }
+                        }
+                    }
+                } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
@@ -128,7 +166,11 @@ struct IdlePillView: View {
                         }
                 }
             }
-            .padding(.horizontal, 8)
+            // Pill is 24pt tall with 18pt icons → 3pt vertical padding top
+            // and bottom. Match horizontally so the inner content sits the
+            // same distance from every edge (the asymmetry — wide left/right,
+            // tight top/bottom — read as unintentional).
+            .padding(.horizontal, PanelLayout.interiorPadding)
             .opacity(isEngaged ? 1 : 0)
             .allowsHitTesting(isEngaged)
         }

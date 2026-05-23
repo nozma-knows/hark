@@ -62,7 +62,12 @@ final class PanelViewModelTests: XCTestCase {
 
     // MARK: - Model lifecycle states show only when no real work is in flight
 
-    func testLoadingShownWhenNoActiveWork() {
+    func testLoadingFallsThroughToIdle() {
+        // The .loading state is INTENTIONALLY invisible on the pill —
+        // see PanelViewModel doc-comment. Bootstrap warm-up can take
+        // 60-120s with no progress signal; showing a spinner that long
+        // looks broken. Users who record during warm-up get a clearer
+        // error pill via the modelNotLoaded path.
         let mode = PanelViewModel.mode(
             recorderState: .idle,
             transcriberState: .loading(.default),
@@ -71,7 +76,7 @@ final class PanelViewModelTests: XCTestCase {
             commandResult: nil,
             transcript: nil
         )
-        XCTAssertEqual(mode, .processing(label: "Loading model"))
+        XCTAssertEqual(mode, .idle)
     }
 
     func testDownloadingShowsProgress() {
@@ -186,10 +191,10 @@ final class PanelViewModelTests: XCTestCase {
         XCTAssertEqual(mode, .idle)
     }
 
-    /// While the model is loading, an active recording still wins the
-    /// pill — the user is speaking RIGHT NOW and shouldn't see a stale
-    /// "Loading model" label until they release.
-    func testRecordingWinsOverModelLoading() {
+    /// While the model is loading in the background, an active recording
+    /// still wins the pill — the user is speaking RIGHT NOW and the
+    /// recording UI is the highest-priority state.
+    func testRecordingWinsOverBackgroundModelLoading() {
         let mode = PanelViewModel.mode(
             recorderState: .recording,
             transcriberState: .loading(.default),

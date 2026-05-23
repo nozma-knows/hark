@@ -16,11 +16,21 @@ struct PanelRootView: View {
     @Bindable var transcriber: Transcriber
     let actions: PanelActions
 
+    /// Shared namespace for matchedGeometryEffect so the pill's background
+    /// capsule smoothly resizes between hover-state (112pt wide) and
+    /// recording-state (76pt wide) — instead of cross-fading two
+    /// independently-sized views.
+    @Namespace private var pillBackground
+
     var body: some View {
         VStack {
             Spacer()
             content
                 .padding(.bottom, 6)
+                .animation(
+                    .spring(response: 0.32, dampingFraction: 0.86),
+                    value: mode
+                )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.clear)
@@ -29,8 +39,13 @@ struct PanelRootView: View {
     @ViewBuilder private var content: some View {
         switch mode {
         case .recording:
-            RecordingPill(recorder: recorder, isCommandMode: false, actions: actions)
-                .transition(.scale.combined(with: .opacity))
+            RecordingPill(
+                recorder: recorder,
+                isCommandMode: false,
+                actions: actions,
+                backgroundNamespace: pillBackground
+            )
+            .transition(.opacity)
         case let .processing(label):
             ProcessingPill(label: label, actions: actions)
                 .transition(.scale.combined(with: .opacity))
@@ -41,8 +56,12 @@ struct PanelRootView: View {
             CommandResultPill(result: result, appState: appState)
                 .transition(.scale.combined(with: .opacity))
         case .idle:
-            IdlePillView(actions: actions, recorder: recorder)
-                .transition(.scale.combined(with: .opacity))
+            IdlePillView(
+                actions: actions,
+                recorder: recorder,
+                backgroundNamespace: pillBackground
+            )
+            .transition(.opacity)
         }
     }
 
@@ -66,6 +85,7 @@ private struct RecordingPill: View {
     @Bindable var recorder: AudioRecorder
     let isCommandMode: Bool
     let actions: PanelActions
+    let backgroundNamespace: Namespace.ID
 
     var body: some View {
         // Entire pill is the stop button. The trigger argument is irrelevant
@@ -74,43 +94,65 @@ private struct RecordingPill: View {
         Button {
             actions.toggleRecording(.dictate)
         } label: {
-            HStack(spacing: 8) {
-                // Stop glyph centered inside the same red dot the user
-                // recognizes from recording state. Clarifies the affordance:
-                // this control IS clickable, click it to stop.
-                ZStack {
-                    Circle()
-                        .fill(.red)
-                        .frame(width: 12, height: 12)
-                        .overlay(
-                            Circle()
-                                .stroke(.red.opacity(0.5), lineWidth: 5)
-                                .scaleEffect(1 + CGFloat(min(recorder.level * 5, 1.2)))
-                                .opacity(0.7)
-                                .animation(.easeOut(duration: 0.12), value: recorder.level)
-                        )
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 6, weight: .black))
-                        .foregroundStyle(.white)
+            ZStack {
+                // matchedGeometryEffect against the IdlePillView's expanded
+                // background — SwiftUI interpolates frame between the two
+                // (hover 112pt → recording 76pt) so the user sees the pill
+                // SMOOTHLY SHRINK on record-start and grow back when the
+                // recording ends. Pairs with the spring animation set on
+                // the parent's `.animation(_:value: mode)` modifier.
+                PillBackground()
+                    .matchedGeometryEffect(id: "pill", in: backgroundNamespace)
+
+                // Stop button + timer centered AS A GROUP inside the pill.
+                // HStack is sized to its content (no Spacer), and the
+                // surrounding ZStack centers it both axes — so the two
+                // elements stay snug against each other and the pair sits
+                // dead-center in the capsule.
+                HStack(spacing: 6) {
+                    ZStack {
+                        // Volume-reactive halo. At silence (level=0)
+                        // opacity is 0 so NO border shows — only the
+                        // solid 12pt dot. As mic input rises, the halo
+                        // fades in AND scales outward — real-time level
+                        // cue tied to the stop button.
+                        Circle()
+                            .stroke(
+                                .red.opacity(0.7 * Double(min(recorder.level * 5, 1))),
+                                lineWidth: 5
+                            )
+                            .frame(width: 12, height: 12)
+                            .scaleEffect(1 + CGFloat(min(recorder.level * 5, 1.2)))
+                            .animation(.easeOut(duration: 0.12), value: recorder.level)
+                        Circle()
+                            .fill(.red)
+                            .frame(width: 12, height: 12)
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 6, weight: .black))
+                            .foregroundStyle(.white)
+                    }
+
+                    Text(format(recorder.duration))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
+                        .contentTransition(.numericText())
+                        .animation(.snappy, value: Int(recorder.duration))
                 }
-
-                Text(format(recorder.duration))
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
-                    .contentTransition(.numericText())
-                    .animation(.snappy, value: Int(recorder.duration))
-
-                MiniBars(level: recorder.level)
-                    .frame(width: 30, height: 12)
 
                 if isCommandMode {
-                    ShortcutChip(label: "Command")
+                    HStack {
+                        Spacer()
+                        ShortcutChip(label: "Command")
+                    }
+                    .padding(.horizontal, PanelLayout.interiorPadding)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(PillBackground())
+            // Snug recording size — just record button + centered time. The
+            // matched-geometry animation interpolates the pill's frame
+            // between hover (112pt) and recording (76pt) for a smooth
+            // shrink/grow on transition.
+            .frame(width: PanelLayout.recordingWidth, height: PanelLayout.expandedHeight)
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
@@ -230,6 +272,22 @@ private struct TranscriptPill: View {
         .padding(.vertical, 6)
         .background(PillBackground())
     }
+}
+
+// MARK: - Shared layout
+
+/// Single source of truth for the pill's geometry. Hover and recording
+/// states share the same height + interior padding; their widths differ
+/// (recording is snugger since it only shows record button + time), and
+/// matchedGeometryEffect on the background interpolates the width during
+/// the transition for a smooth shrink/grow.
+enum PanelLayout {
+    static let expandedWidth: CGFloat = 112
+    static let recordingWidth: CGFloat = 76
+    static let expandedHeight: CGFloat = 24
+    /// Match horizontal to vertical so content sits the same distance
+    /// from every edge of the capsule.
+    static let interiorPadding: CGFloat = 3
 }
 
 // MARK: - Helpers

@@ -6,9 +6,9 @@ Hark is a macOS app that turns your voice into text, paste, or commands — anyw
 
 - **Hold `Fn`** — push-to-talk dictation. Transcript appears in a pill at the bottom of the screen.
 - **Hold `⌃ + Fn`** — polishes the transcript and pastes it wherever your cursor is.
-- **Hold `⇧ + Fn`** — voice command. *"Open Linear in my work profile."* *"Take a screenshot."*
+- **Hold `⇧ + Fn`** — voice command. *"Open Chrome with my work profile and go to YouTube."* *"Take a screenshot."* *"Search Google for the weather in Tokyo."* *"Run shortcut Daily Briefing."*
 
-Transcription runs on-device via [WhisperKit](https://github.com/argmaxinc/WhisperKit) on the Apple Neural Engine. Claude (via the [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview)) polishes the raw output and drives voice commands. Hark is bring-your-own-Claude — no bundled credentials.
+Transcription runs on-device via [WhisperKit](https://github.com/argmaxinc/WhisperKit) on the Apple Neural Engine. Voice commands route through a deterministic dispatcher for the common cases (open app, open URL, Chrome-profile routing, shortcuts, screenshot, clipboard) and fall back to Claude — via the Anthropic Messages API (Haiku 4.5 + prompt caching) when you supply an API key, or via the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) when you only have a Claude Code subscription. Hark is bring-your-own-Claude — no bundled credentials.
 
 **Download:** [tellhark.com/latest.dmg](https://tellhark.com/latest.dmg) (signed + notarized · Apple Silicon · macOS 14+)
 **Site:** [tellhark.com](https://tellhark.com)
@@ -59,14 +59,14 @@ xcodebuild -project Hark.xcodeproj -scheme Hark \
 
 ### Cutting a signed + notarized release
 
-Requires Apple Developer Program enrollment and the `Developer ID Application` cert installed locally, plus an App Store Connect API key stored as the `hark-notary-api` notarytool keychain profile. See `docs/distribution.md` if you need the full setup walk-through.
+Requires Apple Developer Program enrollment and the `Developer ID Application` cert installed locally, plus an App Store Connect API key stored as the `hark-notary-api` notarytool keychain profile. The release script is self-contained — read `macos/scripts/release.sh` if you want the play-by-play.
 
 ```sh
 cd macos
-./scripts/release.sh 0.1.1   # archive → sign → notarize → staple → dmg → upload
+./scripts/release.sh 0.1.5   # archive → sign → notarize → staple → dmg → upload
 ```
 
-If `R2_ACCOUNT_ID` is set + `aws --profile r2` is configured, the script also uploads to Cloudflare R2 so the new build appears at `tellhark.com/Hark-0.1.1.dmg` and `tellhark.com/latest.dmg`.
+If `R2_ACCOUNT_ID` is set + `aws --profile r2` is configured, the script also uploads to Cloudflare R2 so the new build appears at `dl.tellhark.com/Hark-0.1.5.dmg` and `dl.tellhark.com/latest.dmg`. Sparkle auto-update is gated off in `project.yml` (`SUPublicEDKey` empty) until the EdDSA signing key is generated and committed — see the comments around `SUPublicEDKey` in `project.yml` for the four-step turn-on procedure.
 
 ## Landing site
 
@@ -92,10 +92,14 @@ Remotion 4 + React 19. The current `Promo` composition is a placeholder hero loo
 
 ## Auth (macOS app)
 
-Hark never bundles or transmits Claude credentials. On first launch the Settings tab detects what's already on your machine and falls back to a guided BYO flow:
+Hark never bundles or transmits Claude credentials. The Settings → Claude tab detects what's already on your machine and falls back to a guided BYO flow. Precedence (highest first):
 
-1. An existing `claude` CLI session (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`), **or**
-2. An `ANTHROPIC_API_KEY` you supply (stored in your Keychain).
+1. `ANTHROPIC_API_KEY` exported in your shell, **or**
+2. `ANTHROPIC_API_KEY` you paste into Settings → Claude (stored in your macOS login Keychain), **or**
+3. `CLAUDE_CODE_OAUTH_TOKEN` from your existing `claude setup-token` session, **or**
+4. `~/.claude/` directory from a local Claude Code install.
+
+API key takes precedence because it activates the Messages API path (Haiku 4.5 + prompt caching) — faster than the Agent SDK and unaffected by your local Claude Code `~/.claude/settings.json` tool-permission rules. Subscription auth still works; it just routes through the SDK transport.
 
 ## License
 

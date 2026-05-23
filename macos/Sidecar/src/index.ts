@@ -1,3 +1,4 @@
+import { defaultStore } from "./conversation.ts";
 import { executeCommand } from "./executeCommand.ts";
 import { polishTranscript } from "./polishTranscript.ts";
 import { err, ok, RequestSchema, type Response } from "./protocol.ts";
@@ -25,6 +26,15 @@ const handlers: Record<string, Handler> = {
   // Voice command → macOS action. Claude drives Bash to fulfill the user's
   // spoken request (open apps, run AppleScript, run Shortcuts, etc.).
   executeCommand: async (params) => executeCommand(params),
+
+  // Clear the in-memory rolling history of recent voice commands. Useful
+  // when the user wants to start a fresh "topic" mid-session without
+  // waiting for the 5-minute TTL to drop the buffer. No params, no
+  // payload — just a fire-and-forget acknowledgment.
+  resetConversation: async () => {
+    defaultStore.clear();
+    return { cleared: true };
+  },
 };
 
 const decoder = new TextDecoder();

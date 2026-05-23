@@ -12,6 +12,10 @@ struct SettingsView: View {
     let transcriber: Transcriber
     let claudeAuth: ClaudeAuth
     let appState: AppState
+    /// Resets the sidecar's rolling conversation history. Closure-injected
+    /// so the Settings UI doesn't need direct access to `AgentSidecar`;
+    /// the production binding lives in HarkApp.
+    let onResetConversation: () -> Void
 
     var body: some View {
         TabView {
@@ -19,8 +23,12 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             HotkeyPane(hotkey: hotkey)
                 .tabItem { Label("Hotkey", systemImage: "keyboard") }
-            ClaudePane(auth: claudeAuth, appState: appState)
-                .tabItem { Label("Claude", systemImage: "sparkles") }
+            ClaudePane(
+                auth: claudeAuth,
+                appState: appState,
+                onResetConversation: onResetConversation
+            )
+            .tabItem { Label("Claude", systemImage: "sparkles") }
             ModelsPane(transcriber: transcriber)
                 .tabItem { Label("Models", systemImage: "cpu") }
         }
@@ -33,6 +41,7 @@ struct SettingsView: View {
         hotkey: HotkeyManager(),
         transcriber: Transcriber(),
         claudeAuth: ClaudeAuth(),
-        appState: AppState()
+        appState: AppState(),
+        onResetConversation: {}
     )
 }

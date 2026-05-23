@@ -7,6 +7,10 @@ import SwiftUI
 struct ClaudePane: View {
     @Bindable var auth: ClaudeAuth
     @Bindable var appState: AppState
+    /// Closure that fires `sidecar.request("resetConversation")` —
+    /// injected from HarkApp so this pane doesn't need a direct
+    /// AgentSidecar reference (and stays trivially previewable).
+    let onResetConversation: () -> Void
 
     /// Buffered user input for the API key field. Empty until the user
     /// types something; resetting on save / clear so the field never
@@ -15,12 +19,16 @@ struct ClaudePane: View {
     /// Surfaces a Keychain save / read failure inline instead of failing
     /// silently. Cleared on the next successful action.
     @State private var apiKeyError: String?
+    /// Flips green for ~2s after a successful reset so the click has
+    /// visible feedback (the action is server-side; no UI change otherwise).
+    @State private var resetConfirmed = false
 
     var body: some View {
         Form {
             authSection
             apiKeySection
             subscriptionFallbackSection
+            conversationSection
             usageSection
         }
         .formStyle(.grouped)
@@ -129,6 +137,37 @@ struct ClaudePane: View {
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    private var conversationSection: some View {
+        Section {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Recent commands are kept for 5 minutes so follow-ups like \"now share that\" work.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    onResetConversation()
+                    resetConfirmed = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        resetConfirmed = false
+                    }
+                } label: {
+                    if resetConfirmed {
+                        Label("Cleared", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Text("Reset history")
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        } header: {
+            Text("Conversation history")
         }
     }
 

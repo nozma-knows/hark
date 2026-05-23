@@ -21,6 +21,7 @@ final class AgentSidecar {
         case notRunning
         case server(message: String, code: String?)
         case malformedResponse
+        case timedOut(method: String, after: TimeInterval)
 
         var description: String {
             switch self {
@@ -29,6 +30,8 @@ final class AgentSidecar {
             case let .server(message, code):
                 code.map { "[\($0)] \(message)" } ?? message
             case .malformedResponse: "Sidecar sent a malformed response"
+            case let .timedOut(method, after):
+                "Sidecar method \(method) timed out after \(Int(after))s"
             }
         }
 
@@ -36,6 +39,11 @@ final class AgentSidecar {
         /// so the pill shows the real reason instead of "error 0".
         var errorDescription: String? { description }
     }
+
+    /// Per-request deadline. Caller can override per call for slow paths
+    /// (e.g., long Claude completions). Without this, a single hanging
+    /// sidecar request would leak a CheckedContinuation forever.
+    static let defaultRequestTimeout: TimeInterval = 15
 
     private var process: Process?
     private var stdinPipe: Pipe?
@@ -74,9 +82,19 @@ final class AgentSidecar {
         proc.standardOutput = outPipe
         proc.standardError = FileHandle.nullDevice
         proc.environment = environmentProvider()
-        proc.terminationHandler = { [weak self] _ in
+        // The terminationHandler may fire LATE — well after we've called
+        // `stop()` (which synchronously clears `process`) and spawned a
+        // fresh sidecar. Capture the specific process so we only clear
+        // state if THIS process is still the active one. Without the
+        // identity check, a delayed termination from the old process
+        // would wipe out the new one, leaving the channel dead until
+        // the next request — exactly the bug the auto-respawn path was
+        // supposed to prevent.
+        proc.terminationHandler = { [weak self] terminatedProc in
             Task { @MainActor [weak self] in
-                self?.handleTermination()
+                guard let self else { return }
+                guard process === terminatedProc else { return }
+                handleTermination()
             }
         }
 
@@ -104,7 +122,16 @@ final class AgentSidecar {
 
     /// Send a request with optional pre-encoded JSON `params` (must be a JSON
     /// object/array/primitive). Returns the raw `result` field as JSON.
-    func request(method: String, params: Data? = nil) async throws -> Data {
+    /// If the sidecar doesn't respond within `timeout`, the continuation
+    /// is resolved with `SidecarError.timedOut` and removed from pending —
+    /// no leaks even if the sidecar later responds.
+    func request(
+        method: String,
+        params: Data? = nil,
+        timeout: TimeInterval = AgentSidecar.defaultRequestTimeout
+    ) async throws
+        -> Data
+    {
         if !isRunning { try start() }
 
         let id = nextId()
@@ -121,6 +148,20 @@ final class AgentSidecar {
             } catch {
                 pendingRequests.removeValue(forKey: id)
                 continuation.resume(throwing: error)
+                return
+            }
+            // Arm the deadline. We capture id (a String value type) and a
+            // weak self so we don't extend the sidecar's lifetime; on fire
+            // we try to claim the continuation, and if it's still pending
+            // we resume it with .timedOut. If the response arrived first,
+            // pendingRequests[id] will already be gone — no double-resume.
+            Task { @MainActor [weak self, id, method, timeout] in
+                let delay = UInt64(timeout * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: delay)
+                guard let self else { return }
+                guard let cont = pendingRequests.removeValue(forKey: id) else { return }
+                Self.logger.error("Sidecar method \(method, privacy: .public) timed out after \(timeout)s")
+                cont.resume(throwing: SidecarError.timedOut(method: method, after: timeout))
             }
         }
     }
@@ -129,18 +170,25 @@ final class AgentSidecar {
     func request<R: Decodable>(
         method: String,
         params: some Encodable,
-        result _: R.Type = R.self
+        result _: R.Type = R.self,
+        timeout: TimeInterval = AgentSidecar.defaultRequestTimeout
     ) async throws
         -> R
     {
         let encoded = try JSONEncoder().encode(params)
-        let data = try await request(method: method, params: encoded)
+        let data = try await request(method: method, params: encoded, timeout: timeout)
         return try JSONDecoder().decode(R.self, from: data)
     }
 
     /// Convenience: no params, decode result.
-    func request<R: Decodable>(method: String, result _: R.Type = R.self) async throws -> R {
-        let data = try await request(method: method, params: nil)
+    func request<R: Decodable>(
+        method: String,
+        result _: R.Type = R.self,
+        timeout: TimeInterval = AgentSidecar.defaultRequestTimeout
+    ) async throws
+        -> R
+    {
+        let data = try await request(method: method, params: nil, timeout: timeout)
         return try JSONDecoder().decode(R.self, from: data)
     }
 

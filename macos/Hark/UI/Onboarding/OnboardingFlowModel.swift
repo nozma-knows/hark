@@ -51,16 +51,6 @@ final class OnboardingFlowModel {
     /// us add more optional steps without rewriting the navigation logic.
     private var skipped: Set<OnboardingStep> = []
 
-    /// Steps the user has manually marked as already-granted because our
-    /// probe disagrees. macOS TCC sometimes shows a permission toggle as
-    /// ON in System Settings while still reporting the running process
-    /// as untrusted — typically right after a new app version is
-    /// installed and the previous build's TCC entry doesn't migrate.
-    /// Without an override, the wizard hard-gates Continue on the probe
-    /// and traps the user. Treat overridden steps as `.complete` so
-    /// navigation behaves the same as a real grant.
-    private var userOverrides: Set<OnboardingStep> = []
-
     /// The step currently visible to the user. Updates trigger SwiftUI
     /// re-renders via `@Observable`.
     private(set) var step: OnboardingStep
@@ -85,7 +75,6 @@ final class OnboardingFlowModel {
     /// the user clicks through (we model "needs a click to dismiss" as
     /// incomplete so the wizard doesn't auto-skip past them).
     func status(of step: OnboardingStep) -> OnboardingStepStatus {
-        if userOverrides.contains(step) { return .complete }
         if skipped.contains(step) { return .skipped }
         switch step {
         case .welcome, .tryIt:
@@ -165,25 +154,6 @@ final class OnboardingFlowModel {
         skipped.insert(target)
         if step == target {
             advance()
-        }
-    }
-
-    /// User claims this permission is already granted — override our
-    /// probe and treat the step as complete. Used when the wizard's
-    /// `isStepRequirementMet` disagrees with what the user is seeing in
-    /// System Settings (post-update TCC drift). Permission steps only;
-    /// no-op for welcome / tryIt / claudeAuth, which have their own
-    /// navigation paths.
-    func acknowledgeGranted(_ target: OnboardingStep) {
-        switch target {
-        case .microphone, .accessibility, .inputMonitoring:
-            userOverrides.insert(target)
-            if step == target {
-                advance()
-            }
-        case .welcome, .tryIt, .claudeAuth:
-            // Welcome / tryIt aren't gated; claudeAuth uses skip(_:).
-            return
         }
     }
 

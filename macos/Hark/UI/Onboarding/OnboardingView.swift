@@ -127,9 +127,9 @@ struct OnboardingView: View {
                 hasRequested: permissions.microphone != .undetermined,
                 onPrimaryAction: handleMicrophoneAction,
                 // Mic detection goes through AVFoundation — granted/denied/
-                // undetermined is unambiguous. No "override" escape hatch
-                // needed here.
-                onAcknowledgeGranted: nil
+                // undetermined is unambiguous. No "restart to apply"
+                // escape hatch needed here.
+                onRestartToApply: nil
             )
         }
     }
@@ -151,12 +151,12 @@ struct OnboardingView: View {
         ) {
             OnboardingPermissionStep(
                 actionExplanation:
-                "Toggle Hark on under Privacy & Security → Accessibility. "
-                    + "The wizard advances automatically.",
+                "macOS only allows this toggle to be flipped in System Settings — apps can't grant "
+                    + "themselves Accessibility. The wizard advances automatically once you toggle Hark on.",
                 status: status,
                 hasRequested: accessibilityRequested,
                 onPrimaryAction: handleAccessibilityAction,
-                onAcknowledgeGranted: { model.acknowledgeGranted(.accessibility) }
+                onRestartToApply: { AppRelauncher.relaunch() }
             )
         }
     }
@@ -178,12 +178,12 @@ struct OnboardingView: View {
         ) {
             OnboardingPermissionStep(
                 actionExplanation:
-                "Toggle Hark on under Privacy & Security → Input Monitoring. "
-                    + "Without this, Hark would silently miss every Fn keypress.",
+                "macOS only allows this toggle to be flipped in System Settings — apps can't grant "
+                    + "themselves Input Monitoring. Toggle Hark on and the wizard advances automatically.",
                 status: status,
                 hasRequested: inputMonitoringRequested,
                 onPrimaryAction: handleInputMonitoringAction,
-                onAcknowledgeGranted: { model.acknowledgeGranted(.inputMonitoring) }
+                onRestartToApply: { AppRelauncher.relaunch() }
             )
         }
     }

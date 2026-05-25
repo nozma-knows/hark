@@ -8,6 +8,17 @@ import SwiftUI
 ///
 /// Hoisting the shared view eliminates the 3× duplicate
 /// PermissionCard / action-mapping code the old onboarding had.
+///
+/// ### Recovery affordance for post-update TCC drift
+/// macOS Catalina+ does not let an app grant itself Accessibility or
+/// Input Monitoring — the user has to flip the toggle in System
+/// Settings, by hand, every time. After a binary update, macOS
+/// sometimes shows the toggle as ON in Settings while still reporting
+/// the running process as untrusted (the TCC entry was tied to the
+/// previous binary's signature). The honest fix is a process restart:
+/// the new launch picks up the current TCC state. We surface
+/// "Restart Hark" as the secondary action after the user has tried
+/// the normal path once.
 struct OnboardingPermissionStep: View {
     /// User-facing copy describing what flips when the user clicks the
     /// primary action — surfaces inline so each step is self-documenting.
@@ -28,12 +39,12 @@ struct OnboardingPermissionStep: View {
     /// to System Settings (depending on `hasRequested`).
     let onPrimaryAction: () -> Void
 
-    /// Invoked when the user clicks the "I've already granted this"
-    /// override. Used to escape the trap where macOS shows the toggle
-    /// as ON in Settings but `AXIsProcessTrusted()` returns false (a
-    /// common post-update TCC drift). Nil for the microphone step,
-    /// where this drift doesn't happen.
-    let onAcknowledgeGranted: (() -> Void)?
+    /// Invoked when the user clicks "Restart Hark to apply" — the
+    /// honest fix for post-update TCC drift, where Settings shows the
+    /// toggle on but the running process still sees the old (denied)
+    /// state. A clean relaunch picks up the new TCC state. Nil for
+    /// the microphone step, where drift doesn't happen.
+    let onRestartToApply: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -45,12 +56,11 @@ struct OnboardingPermissionStep: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 8)
-            // Surface the "I've granted it" override only after the
-            // user has clicked the primary action at least once — no
-            // point offering an escape hatch before they've tried the
-            // normal path.
-            if hasRequested, status == .incomplete, let onAcknowledgeGranted {
-                Button("I've already granted this — continue anyway", action: onAcknowledgeGranted)
+            // Recovery affordance for post-update TCC drift. Only show
+            // it after the user has tried the normal path once —
+            // otherwise it's noise.
+            if hasRequested, status == .incomplete, let onRestartToApply {
+                Button("Already granted? Restart Hark to apply", action: onRestartToApply)
                     .buttonStyle(.borderless)
                     .font(.footnote)
                     .foregroundStyle(.tint)

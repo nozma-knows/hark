@@ -20,6 +20,15 @@ struct RecordingPipeline {
 
     let appState: AppState
     let sidecar: any SidecarRequesting
+    /// Per-app polish profile selector. The pipeline asks the store for
+    /// the profile that applies to the frontmost app at finalize time —
+    /// keeps the routing single-source-of-truth even though the store is
+    /// edited from a separate Settings pane.
+    let polishProfileStore: PolishProfileStore
+    /// Append-only record of every transcript Hark has produced. Optional
+    /// at the type level so headless tests can omit it; production
+    /// always wires the singleton.
+    let historyStore: HistoryStore?
 
     // MARK: - Entry
 
@@ -40,30 +49,58 @@ struct RecordingPipeline {
     // MARK: - Polish + deliver (dictate / insert)
 
     private func polishAndDeliver(_ raw: String, trigger: HotkeyTrigger) async {
+        // Sample the frontmost bundle BEFORE we start polishing — Hark
+        // becoming key (the pill activates briefly, or focus shifts) would
+        // otherwise change `frontmostApplication` mid-call. Reading here
+        // pins the profile to where the user was when they spoke.
+        let profile = polishProfileStore.currentProfile()
         appState.isPolishing = true
-        let text = await polishOrFallback(raw)
+        let text = await polishOrFallback(raw, profile: profile)
         appState.isPolishing = false
 
+        let kind: HistoryEntry.Kind
         if trigger == .insert {
             let hasInput = InputInserter.hasFocusedTextInput()
             Self.logger.info("Insert mode: hasFocusedInput=\(hasInput, privacy: .public)")
             if hasInput {
                 InputInserter.paste(text)
+                kind = .insert
             } else {
                 appState.transcript = text
                 appState.transcriptInsertFailed = true
+                kind = .dictate
             }
         } else {
             appState.transcript = text
+            kind = .dictate
         }
+
+        historyStore?.record(
+            HistoryEntry(
+                id: UUID(),
+                timestamp: Date(),
+                kind: kind,
+                transcript: raw,
+                polished: text,
+                summary: text,
+                succeeded: true
+            )
+        )
     }
 
     /// Send the trimmed Whisper output to Claude (via the Bun sidecar) for
     /// punctuation / casing / filler cleanup. Returns the polished string,
     /// or the raw input unchanged on any failure. Side-effect: accumulates
     /// usage stats into `appState.claudeUsage` (persisted).
-    private func polishOrFallback(_ raw: String) async -> String {
-        struct Params: Encodable { let text: String }
+    ///
+    /// The `profile` argument routes the sidecar to one of the per-tone
+    /// system prompts (casual / formal / code / standard). Unknown
+    /// profile names fall back to `standard` on the sidecar side.
+    private func polishOrFallback(_ raw: String, profile: PolishProfile) async -> String {
+        struct Params: Encodable {
+            let text: String
+            let profile: String
+        }
         struct PolishResult: Decodable {
             let polished: String
             let changed: Bool
@@ -72,7 +109,7 @@ struct RecordingPipeline {
         do {
             let result: PolishResult = try await sidecar.request(
                 method: "polishTranscript",
-                params: Params(text: raw),
+                params: Params(text: raw, profile: profile.rawValue),
                 result: PolishResult.self,
                 timeout: 8
             )
@@ -113,12 +150,35 @@ struct RecordingPipeline {
             recordUsage(result.usage)
             appState.commandResult = .init(summary: result.summary, succeeded: result.succeeded)
             scheduleCommandResultClear(result.summary)
+            historyStore?.record(
+                HistoryEntry(
+                    id: UUID(),
+                    timestamp: Date(),
+                    kind: .command,
+                    transcript: transcript,
+                    polished: nil,
+                    summary: result.summary,
+                    succeeded: result.succeeded
+                )
+            )
         } catch {
             Self.logger.error("executeCommand failed: \(String(describing: error), privacy: .public)")
             FileLogger.shared.log(.error, category: "Orchestrator", "executeCommand failed: \(error)")
+            let failureSummary = "Command failed: \(error.localizedDescription)"
             appState.commandResult = .init(
-                summary: "Command failed: \(error.localizedDescription)",
+                summary: failureSummary,
                 succeeded: false
+            )
+            historyStore?.record(
+                HistoryEntry(
+                    id: UUID(),
+                    timestamp: Date(),
+                    kind: .command,
+                    transcript: transcript,
+                    polished: nil,
+                    summary: failureSummary,
+                    succeeded: false
+                )
             )
         }
     }

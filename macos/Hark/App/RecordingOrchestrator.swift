@@ -51,15 +51,38 @@ final class RecordingOrchestrator {
         transcriber: any Transcribing,
         sidecar: any SidecarRequesting,
         permissions: any PermissionGate,
-        needsOnboarding: @escaping () -> Void
+        needsOnboarding: @escaping () -> Void,
+        polishProfileStore: PolishProfileStore = PolishProfileStore(),
+        historyStore: HistoryStore? = nil
     ) {
         self.appState = appState
         self.hotkey = hotkey
         self.recorder = recorder
         self.transcriber = transcriber
-        pipeline = RecordingPipeline(appState: appState, sidecar: sidecar)
+        pipeline = RecordingPipeline(
+            appState: appState,
+            sidecar: sidecar,
+            polishProfileStore: polishProfileStore,
+            historyStore: historyStore
+        )
         self.permissions = permissions
         self.needsOnboarding = needsOnboarding
+    }
+
+    /// Re-issue a saved history entry. Skips the recording + transcribe
+    /// steps and goes straight to the pipeline's delivery branch with the
+    /// transcript Hark already captured. Used by the History window's
+    /// "Re-run" button on command-mode entries.
+    func reRun(_ entry: HistoryEntry) {
+        guard ensureReady() else { return }
+        let trigger: HotkeyTrigger = switch entry.kind {
+        case .command: .command
+        case .insert: .insert
+        case .dictate: .dictate
+        }
+        Task { [pipeline, transcript = entry.transcript] in
+            await pipeline.deliver(transcript, trigger: trigger)
+        }
     }
 
     // MARK: - Public entry points

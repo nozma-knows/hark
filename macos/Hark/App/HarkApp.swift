@@ -29,7 +29,8 @@ struct HarkApp: App {
                 recorder: delegate.recorder,
                 transcriber: delegate.transcriber,
                 updater: delegate.updater,
-                onShowWelcome: { delegate.onboardingController.show() }
+                onShowWelcome: { delegate.onboardingController.show() },
+                onShowHistory: { delegate.historyWindowController.show() }
             )
         } label: {
             Image(nsImage: Self.menuBarIcon)
@@ -43,6 +44,8 @@ struct HarkApp: App {
                 transcriber: delegate.transcriber,
                 claudeAuth: delegate.claudeAuth,
                 appState: delegate.appState,
+                aliasStore: delegate.aliasStore,
+                polishProfileStore: delegate.polishProfileStore,
                 pillPosition: PillPositionSettings(
                     model: delegate.panelController.positionModel,
                     hasAnyStoredAnchor: { [panel = delegate.panelController] in
@@ -81,6 +84,7 @@ private struct HarkMenu: View {
     @Bindable var transcriber: Transcriber
     @Bindable var updater: UpdateManager
     let onShowWelcome: () -> Void
+    let onShowHistory: () -> Void
 
     @Environment(\.openSettings)
     private var openSettings
@@ -94,6 +98,11 @@ private struct HarkMenu: View {
         Button("Welcome…") {
             onShowWelcome()
         }
+
+        Button("History…") {
+            onShowHistory()
+        }
+        .keyboardShortcut("y", modifiers: [.command])
 
         Button("Settings…") {
             openSettings()

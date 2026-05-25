@@ -4,27 +4,44 @@ import SwiftUI
 struct OnboardingView: View {
     @Bindable var permissions: PermissionsManager
     @Bindable var claudeAuth: ClaudeAuth
+    @Bindable var recorder: AudioRecorder
+    @Bindable var transcriber: Transcriber
     let onComplete: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-                .padding(.top, 28)
-                .padding(.bottom, 18)
+        ScrollView {
+            VStack(spacing: 0) {
+                header
+                    .padding(.top, 28)
+                    .padding(.bottom, 18)
 
-            VStack(spacing: 12) {
-                microphoneCard
-                accessibilityCard
-                inputMonitoringCard
-                claudeCard
-            }
-            .padding(.horizontal, 24)
-
-            Spacer(minLength: 24)
-
-            footer
+                VStack(spacing: 12) {
+                    microphoneCard
+                    accessibilityCard
+                    inputMonitoringCard
+                    claudeCard
+                }
                 .padding(.horizontal, 24)
-                .padding(.bottom, 24)
+
+                // Test-recording step only unlocks once the OS perms +
+                // (recommended) Claude auth are squared away. The user
+                // has nothing useful to record otherwise.
+                if permissions.allGranted {
+                    Divider()
+                        .padding(.horizontal, 24)
+                        .padding(.top, 16)
+                    OnboardingTestStep(
+                        recorder: recorder,
+                        transcriber: transcriber
+                    )
+                    .padding(.horizontal, 24)
+                }
+
+                footer
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+                    .padding(.top, 16)
+            }
         }
         .frame(width: 480, height: 600)
     }
@@ -223,6 +240,8 @@ struct OnboardingView: View {
     OnboardingView(
         permissions: PermissionsManager(),
         claudeAuth: ClaudeAuth(),
+        recorder: AudioRecorder(),
+        transcriber: Transcriber(),
         onComplete: {}
     )
 }

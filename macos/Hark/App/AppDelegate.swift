@@ -20,6 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let transcriber: Transcriber
     let claudeAuth: ClaudeAuth
     let sidecar: AgentSidecar
+    let aliasStore: AliasStore
+    let polishProfileStore: PolishProfileStore
+    let historyStore: HistoryStore
+    let historyWindowController: HistoryWindowController
     let panelController: PanelWindowController
     let onboardingController: OnboardingWindowController
     let orchestrator: RecordingOrchestrator
@@ -40,49 +44,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated(unsafe) private var notificationTokens: [NSObjectProtocol] = []
 
     override init() {
-        let state = AppState()
-        let perms = PermissionsManager()
-        let hotkeyManager = HotkeyManager()
-        let audioRecorder = AudioRecorder()
-        let transcriberInstance = Transcriber()
-        let claudeAuthInstance = ClaudeAuth()
-        let sidecarInstance = AgentSidecar(
-            environmentProvider: { [claudeAuthInstance] in
-                claudeAuthInstance.sidecarEnvironment()
-            }
+        let deps = Self.buildDependencies()
+        appState = deps.state
+        permissions = deps.perms
+        hotkey = deps.hotkey
+        recorder = deps.recorder
+        transcriber = deps.transcriber
+        claudeAuth = deps.claudeAuth
+        sidecar = deps.sidecar
+        aliasStore = deps.aliases
+        polishProfileStore = deps.polishProfiles
+        historyStore = deps.history
+        // History window controller has a late-bound re-run closure; we
+        // rewire it in `wireCallbacks()` once `orchestrator` exists.
+        historyWindowController = HistoryWindowController(
+            store: deps.history,
+            onReRun: { _ in /* wired below */ }
         )
-        let onboarding = OnboardingWindowController(
-            permissions: perms,
-            claudeAuth: claudeAuthInstance
-        )
-        appState = state
-        permissions = perms
-        hotkey = hotkeyManager
-        recorder = audioRecorder
-        transcriber = transcriberInstance
-        claudeAuth = claudeAuthInstance
-        sidecar = sidecarInstance
-        onboardingController = onboarding
+        onboardingController = deps.onboarding
         updater = UpdateManager()
-        // Orchestrator owns the recording → transcribe → deliver pipeline.
-        // AppDelegate is now just AppKit glue: construct, hand-off, listen
-        // for activation notifications.
         orchestrator = RecordingOrchestrator(
-            appState: state,
-            hotkey: hotkeyManager,
-            recorder: audioRecorder,
-            transcriber: transcriberInstance,
-            sidecar: sidecarInstance,
-            permissions: perms,
-            needsOnboarding: { [onboarding] in onboarding.show() }
+            appState: deps.state,
+            hotkey: deps.hotkey,
+            recorder: deps.recorder,
+            transcriber: deps.transcriber,
+            sidecar: deps.sidecar,
+            permissions: deps.perms,
+            needsOnboarding: { [onboarding = deps.onboarding] in onboarding.show() },
+            polishProfileStore: deps.polishProfiles,
+            historyStore: deps.history
         )
-        // Construct AppDelegate first, then wire the panel actions in
-        // applicationDidFinishLaunching (closures need `self`, which we can't
-        // capture before super.init()).
         panelController = PanelWindowController(
-            appState: state,
-            recorder: audioRecorder,
-            transcriber: transcriberInstance,
+            appState: deps.state,
+            recorder: deps.recorder,
+            transcriber: deps.transcriber,
             actions: PanelActions(
                 toggleRecording: { _ in /* wired below */ },
                 cancelProcessing: { /* wired below */ },
@@ -93,6 +88,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         super.init()
         wireCallbacks()
+    }
+
+    /// Container for every stateful dependency the AppDelegate owns.
+    /// Extracted from `init` so the initializer stays under SwiftLint's
+    /// function_body_length threshold; pure construction with no
+    /// observer wiring lives here.
+    private struct Dependencies {
+        let state: AppState
+        let perms: PermissionsManager
+        let hotkey: HotkeyManager
+        let recorder: AudioRecorder
+        let transcriber: Transcriber
+        let claudeAuth: ClaudeAuth
+        let aliases: AliasStore
+        let polishProfiles: PolishProfileStore
+        let history: HistoryStore
+        let sidecar: AgentSidecar
+        let onboarding: OnboardingWindowController
+    }
+
+    private static func buildDependencies() -> Dependencies {
+        let claudeAuth = ClaudeAuth()
+        let recorder = AudioRecorder()
+        let transcriber = Transcriber()
+        let perms = PermissionsManager()
+        let sidecar = AgentSidecar(
+            environmentProvider: { [claudeAuth] in
+                var env = claudeAuth.sidecarEnvironment()
+                // Pin the sidecar's alias dispatcher at the same file
+                // the Swift store writes. Without this override, both
+                // sides agree on the path by accident — explicit is safer.
+                env["HARK_ALIASES_PATH"] = AliasStore.fileURL.path
+                return env
+            }
+        )
+        return Dependencies(
+            state: AppState(),
+            perms: perms,
+            hotkey: HotkeyManager(),
+            recorder: recorder,
+            transcriber: transcriber,
+            claudeAuth: claudeAuth,
+            aliases: AliasStore(),
+            polishProfiles: PolishProfileStore(),
+            history: HistoryStore(),
+            sidecar: sidecar,
+            onboarding: OnboardingWindowController(
+                permissions: perms,
+                claudeAuth: claudeAuth,
+                recorder: recorder,
+                transcriber: transcriber
+            )
+        )
     }
 
     /// Plumbs the orchestrator, hotkey, panel, and permissions together.
@@ -140,6 +188,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // relaunched Hark.
         claudeAuth.onCredentialsChanged = { [weak self] in
             self?.sidecar.stop()
+        }
+
+        // History "Re-run" button: hands the saved entry back to the
+        // orchestrator, which dispatches it through the same pipeline
+        // branch that originally produced it.
+        historyWindowController.onReRun = { [weak orchestrator = orchestrator] entry in
+            orchestrator?.reRun(entry)
         }
     }
 

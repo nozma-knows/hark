@@ -17,12 +17,21 @@ final class OnboardingWindowController: NSObject {
 
     private let permissions: PermissionsManager
     private let claudeAuth: ClaudeAuth
+    private let recorder: AudioRecorder
+    private let transcriber: Transcriber
     private var window: NSWindow?
     private var pollTimer: Timer?
 
-    init(permissions: PermissionsManager, claudeAuth: ClaudeAuth) {
+    init(
+        permissions: PermissionsManager,
+        claudeAuth: ClaudeAuth,
+        recorder: AudioRecorder,
+        transcriber: Transcriber
+    ) {
         self.permissions = permissions
         self.claudeAuth = claudeAuth
+        self.recorder = recorder
+        self.transcriber = transcriber
         super.init()
     }
 
@@ -72,7 +81,9 @@ final class OnboardingWindowController: NSObject {
 
         let content = OnboardingView(
             permissions: permissions,
-            claudeAuth: claudeAuth
+            claudeAuth: claudeAuth,
+            recorder: recorder,
+            transcriber: transcriber
         ) { [weak self] in
             self?.close()
         }

@@ -12,6 +12,11 @@ struct SettingsView: View {
     let transcriber: Transcriber
     let claudeAuth: ClaudeAuth
     let appState: AppState
+    /// Persistent store for user-defined voice command aliases.
+    let aliasStore: AliasStore
+    /// Per-app polish profile selector. Shared with the recording pipeline
+    /// so changes here take effect on the very next dictation.
+    let polishProfileStore: PolishProfileStore
     /// Position model + reset actions surfaced in GeneralPane's "Pill
     /// position" section. Sourced from `PanelWindowController` so the
     /// settings UI stays a pure observer of the panel's state.
@@ -35,6 +40,10 @@ struct SettingsView: View {
             .tabItem { Label("Claude", systemImage: "sparkles") }
             ModelsPane(transcriber: transcriber)
                 .tabItem { Label("Models", systemImage: "cpu") }
+            PolishPane(store: polishProfileStore)
+                .tabItem { Label("Polish", systemImage: "wand.and.sparkles") }
+            AliasesPane(store: aliasStore)
+                .tabItem { Label("Commands", systemImage: "text.cursor") }
         }
         .frame(width: 560, height: 460)
     }
@@ -46,6 +55,8 @@ struct SettingsView: View {
         transcriber: Transcriber(),
         claudeAuth: ClaudeAuth(),
         appState: AppState(),
+        aliasStore: AliasStore(),
+        polishProfileStore: PolishProfileStore(),
         pillPosition: PillPositionSettings(
             model: PillPositionModel(),
             hasAnyStoredAnchor: { false },

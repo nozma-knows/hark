@@ -98,7 +98,9 @@ final class E2ETranscribePipelineTests: XCTestCase {
             sidecar: StubSidecar.executeOnly(
                 summary: "Routed: \(transcript.lowercased())",
                 succeeded: true
-            )
+            ),
+            polishProfileStore: PolishProfileStore(),
+            historyStore: nil
         )
         // pipeline.deliver early-returns if transcript is blank; pass a
         // canned phrase in that case so the test still verifies the

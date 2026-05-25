@@ -1,81 +1,84 @@
+import { z } from "zod";
 import { loadChromeProfiles, type ChromeProfile } from "../chromeProfiles.ts";
 import { runArgv } from "../runBash.ts";
-import type { Dispatcher, ExecutionResult } from "./types.ts";
+import type { ExecutionResult, Tool } from "./types.ts";
 
 /**
- * "Open YouTube in my work profile" / "Open github.com in personal profile".
+ * Open a URL in a specific Google Chrome profile. The LLM picks this
+ * when the user names a profile ("…in my work profile", "open YouTube
+ * in personal"). The exact list of available profiles is included in
+ * the system prompt so the model can pass the right profile name.
  *
- * Highest-priority dispatcher (priority 10) because the "in <profile>"
- * suffix is a strong signal — the more general openUrl/openApp regexes
- * would happily eat the phrase without honoring the profile.
- *
- * Profile name resolution is forgiving: case-insensitive, "my X" and
- * "X" both work, partial substring match (so "work" finds "Work
- * (noah@company.com)"). If we can't resolve the named profile we
- * decline the match and let the LLM fallback handle it — better to
- * be safe than open in the wrong profile.
+ * Profile resolution is forgiving: case-insensitive substring match,
+ * so "work" finds "Work (noah@company.com)". If no profile matches,
+ * the tool returns a clear error and the model can fall back to plain
+ * `openUrl`.
  */
 
-interface ChromeProfileAction {
-  readonly url: string;
-  readonly profile: ChromeProfile;
-}
+const InputShape = {
+  url: z.string().min(1, "url is required"),
+  profile: z
+    .string()
+    .min(1, "profile name is required (use the user-facing Chrome profile name)"),
+};
+const Input = z.object(InputShape);
+type Input = z.infer<typeof Input>;
 
-// "open <target> in (my )? <profile> profile" — verb alternation
-// mirrors openUrl + openApp so "open up X in my work profile" or
-// "pull up X in personal profile" both match.
-const PATTERN =
-  /^(?:open|launch|go\s+to|navigate\s+to|visit|browse\s+to|pull\s+up)(?:\s+(?:up|the|a))?\s+(.+?)\s+in\s+(?:my\s+)?(.+?)\s+profile\s*$/;
+export const openInChromeProfile: Tool<Input> = {
+  name: "openInChromeProfile",
+  description:
+    "Open a URL in a specific Google Chrome profile. Use this when the user names a Chrome profile ('in my work profile', 'personal profile'). The available profiles are listed in the system prompt; pass the user-facing profile name. Compose search URLs directly in the url field — e.g., a Gmail search becomes 'https://mail.google.com/mail/u/0/#search/from%3Axfinity'.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      url: {
+        type: "string",
+        description:
+          "The URL to open. Scheme will be added if missing. Pre-compose search URLs (Gmail search, Google search, etc.) here instead of opening the home page.",
+      },
+      profile: {
+        type: "string",
+        description:
+          "The user-facing Chrome profile name (e.g. 'Personal', 'Work'). Matched case-insensitively with substring search.",
+      },
+    },
+    required: ["url", "profile"],
+  },
+  zodShape: InputShape,
 
-export const chromeProfile: Dispatcher<ChromeProfileAction> = {
-  id: "chrome-profile",
-  priority: 10,
-
-  // Async work happens in execute; match is sync & pure.
-  // We carry the raw profile name through the action and look it up
-  // at execute time when the profile loader can be awaited.
-  match(transcript) {
-    const m = transcript.match(PATTERN);
-    if (!m) return null;
-    const target = m[1]?.trim();
-    const profileName = m[2]?.trim();
-    if (!target || !profileName) return null;
-    return {
-      url: normalizeUrl(target),
-      // Defer the profile lookup to execute(); fill with a placeholder
-      // that carries the user-spoken name so execute() can resolve it.
-      profile: { directory: "", name: profileName },
-    };
+  parseInput(raw) {
+    return Input.parse(raw);
   },
 
   async execute({ url, profile }): Promise<ExecutionResult> {
-    const resolved = await resolveProfile(profile.name);
+    const resolved = await resolveProfile(profile);
     if (resolved === null) {
       return {
-        summary: `Couldn't find a Chrome profile matching "${profile.name}"`,
+        summary: `Couldn't find a Chrome profile matching "${profile}"`,
         succeeded: false,
         error: "profile_not_found",
         bashCommands: [],
       };
     }
+    const normalized = normalizeUrl(url);
     const argv = [
       "open",
       "-na",
       "Google Chrome",
       "--args",
       `--profile-directory=${resolved.directory}`,
-      url,
+      normalized,
     ];
     const result = await runArgv(argv);
     if (result.exitCode === 0) {
       return {
-        summary: `Opened ${url} in ${resolved.name}`,
+        summary: `Opened ${normalized} in ${resolved.name}`,
         succeeded: true,
         bashCommands: [result.command],
       };
     }
     return {
-      summary: `Couldn't open ${url} in ${resolved.name}`,
+      summary: `Couldn't open ${normalized} in ${resolved.name}`,
       succeeded: false,
       error: result.stderr.trim() || `exit ${result.exitCode}`,
       bashCommands: [result.command],
@@ -86,13 +89,10 @@ export const chromeProfile: Dispatcher<ChromeProfileAction> = {
 async function resolveProfile(spokenName: string): Promise<ChromeProfile | null> {
   const profiles = await loadChromeProfiles();
   if (profiles.length === 0) return null;
-  const target = spokenName.toLowerCase();
-
-  // Exact match first
+  const target = spokenName.toLowerCase().trim();
   for (const p of profiles) {
     if (p.name.toLowerCase() === target) return p;
   }
-  // Substring match — "work" finds "Work (noah@company.com)"
   for (const p of profiles) {
     if (p.name.toLowerCase().includes(target)) return p;
   }
@@ -100,9 +100,7 @@ async function resolveProfile(spokenName: string): Promise<ChromeProfile | null>
 }
 
 function normalizeUrl(raw: string): string {
-  let url = raw.replace(/\s+dot\s+/gi, ".");
-  if (!/^https?:\/\//i.test(url) && /\.[a-z]{2,}/i.test(url)) {
-    url = `https://${url}`;
-  }
-  return url;
+  let url = raw.trim().replace(/\s+dot\s+/gi, ".");
+  if (/^[a-z][a-z0-9+\-.]*:/i.test(url)) return url;
+  return `https://${url}`;
 }

@@ -1,35 +1,37 @@
-import type { Dispatcher, ExecutionResult } from "./types.ts";
+import { z } from "zod";
+import type { ExecutionResult, Tool } from "./types.ts";
 
 /**
- * "Copy github.com to my clipboard" / "Put hello world on the clipboard"
- * — pipes a literal string to pbcopy.
- *
- * We DON'T use `runArgv` here because pbcopy reads from stdin, which
- * the existing helpers don't support. Spawning directly with a stdin
- * pipe is ~10 lines and keeps the dispatcher self-contained.
- *
- * Priority 40 — runs after the more-specific dispatchers.
+ * Copy a literal string to the macOS clipboard via `pbcopy`. The LLM
+ * picks this when the user says "copy X to my clipboard" or "put X on
+ * the clipboard". Doesn't go through `runBash`/`runArgv` because pbcopy
+ * reads from stdin and the existing helpers don't support stdin pipes.
  */
 
-interface ClipboardAction {
-  readonly text: string;
-}
+const InputShape = {
+  text: z.string().min(1, "text must be non-empty"),
+};
+const Input = z.object(InputShape);
+type Input = z.infer<typeof Input>;
 
-const PATTERNS: ReadonlyArray<RegExp> = [
-  /^copy\s+(.+?)\s+to\s+(?:my\s+|the\s+)?clipboard\s*$/,
-  /^put\s+(.+?)\s+(?:on|in)\s+(?:my\s+|the\s+)?clipboard\s*$/,
-];
+export const clipboardCopy: Tool<Input> = {
+  name: "clipboardCopy",
+  description:
+    "Copy a literal string to the macOS clipboard. Use this when the user wants something specific put on the clipboard ('copy github.com to my clipboard', 'put hello world on the clipboard'). The string is written to pbcopy verbatim — pre-quote / pre-escape if you need to.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      text: {
+        type: "string",
+        description: "The literal text to place on the clipboard.",
+      },
+    },
+    required: ["text"],
+  },
+  zodShape: InputShape,
 
-export const clipboard: Dispatcher<ClipboardAction> = {
-  id: "clipboard",
-  priority: 40,
-
-  match(transcript) {
-    for (const p of PATTERNS) {
-      const m = transcript.match(p);
-      if (m?.[1]) return { text: m[1].trim() };
-    }
-    return null;
+  parseInput(raw) {
+    return Input.parse(raw);
   },
 
   async execute({ text }): Promise<ExecutionResult> {

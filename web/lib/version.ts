@@ -3,6 +3,6 @@
 // MARKETING_VERSION from `../macos/project.yml`. Keeping this as the
 // only place the version is referenced in the web app prevents the
 // landing page from drifting from the actual shipped DMG.
-export const VERSION_NUM = "0.1.5";
+export const VERSION_NUM = "0.1.6";
 export const VERSION = `v${VERSION_NUM}`;
 export const DOWNLOAD_URL = `https://dl.tellhark.com/Hark-${VERSION_NUM}.dmg`;

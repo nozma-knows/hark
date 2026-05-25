@@ -1,40 +1,53 @@
 /**
- * Contracts shared by every dispatcher. Each dispatcher lives in
- * its own file under `dispatch/` with a small action type private
- * to that file; the registry erases the action type into a uniform
- * `RegistryEntry` so `tryMatch()` returns a single shape regardless
- * of which dispatcher fired.
+ * Shared contracts for the tool layer. Each tool lives in its own file
+ * under `dispatch/` and is collected into the runtime registry by
+ * `registry.ts`. The LLM is the router: it reads the user's transcript,
+ * picks a tool by name, fills the JSON-schema-validated `input`, and
+ * the registry runs the matching `execute` to do the work.
  *
- * Splitting `match()` and `execute()` is deliberate: `match()` is
- * pure (no side effects, no I/O) and can be unit-tested with hundreds
- * of transcript variants in milliseconds. `execute()` is the only
- * place that actually touches the system.
+ * This replaces the older "dispatcher" pattern (regex match() → execute())
+ * which routed before the LLM ever saw the transcript. The regex layer
+ * was brittle — phrases starting with "open" were eaten by the open-app
+ * matcher even when the user meant something more specific ("open a
+ * Juggle task to fix the pill bug"). Now the LLM sees the whole sentence
+ * and picks the right tool.
+ *
+ * Splitting input schema (declarative, JSON) from execution (imperative,
+ * side-effecting) keeps the LLM-facing surface and the macOS-facing
+ * surface independently testable.
  */
 
-export interface Dispatcher<TAction> {
-  /** Stable identifier — used in telemetry and the wire `dispatcherId`. */
-  readonly id: string;
+import type { ZodRawShape } from "zod";
 
-  /**
-   * Lower runs first. Lets more specific dispatchers (e.g. chromeProfile)
-   * win over broader ones (e.g. openApp) when both could plausibly match.
-   */
-  readonly priority: number;
+export interface Tool<TInput> {
+  /** Stable machine-name. Used as the tool's name on the Anthropic
+   *  Messages API and as the MCP tool suffix on the Agent SDK path. */
+  readonly name: string;
 
-  /**
-   * Pure: extracts a structured action from a (normalized) transcript,
-   * or returns null if the dispatcher has nothing to say about this one.
-   * MUST NOT touch the filesystem, run shell commands, or call APIs —
-   * keep it deterministic so tests don't need to mock anything.
-   */
-  match(transcript: string): TAction | null;
+  /** One-paragraph description used by the LLM to choose this tool.
+   *  Should describe WHEN to pick it (in plain English) and any
+   *  non-obvious behaviour the model needs to know. */
+  readonly description: string;
 
-  /**
-   * Side-effecting: runs the structured action and returns a result.
-   * MUST NOT throw — every failure path maps to `{ succeeded: false, error }`
-   * so the caller can render a pill without a try/catch.
-   */
-  execute(action: TAction): Promise<ExecutionResult>;
+  /** Anthropic Messages API input schema. JSON Schema, draft 7-ish —
+   *  Anthropic accepts `{ type: "object", properties: { … }, required: [...] }`. */
+  readonly inputSchema: Record<string, unknown>;
+
+  /** Same shape, expressed as a Zod raw shape — used by the Agent SDK
+   *  `tool()` helper which accepts `Record<string, ZodType>`. Defined
+   *  once per tool (the inputSchema is the JSON-rendered form of it). */
+  readonly zodShape: ZodRawShape;
+
+  /** Runtime validator. Receives the raw `input` JSON from the model
+   *  and either returns a typed action or throws a descriptive Error.
+   *  Throwing maps to an `is_error: true` tool_result; the LLM gets
+   *  another turn to retry with corrected arguments. */
+  parseInput(raw: unknown): TInput;
+
+  /** Side-effecting execution. MUST NOT throw — every failure path
+   *  maps to `{ succeeded: false, error }` so the caller can render
+   *  a pill without a try/catch. */
+  execute(input: TInput): Promise<ExecutionResult>;
 }
 
 export interface ExecutionResult {
@@ -48,35 +61,44 @@ export interface ExecutionResult {
 }
 
 /**
- * Type-erased registry entry. Built by `asEntry(dispatcher)` so each
- * dispatcher's action type stays internal to its file and the
- * registry surface stays free of generics.
+ * Type-erased view of a tool. The registry uses this so the LLM clients
+ * can iterate tools without thinking about each tool's input shape.
  */
-export interface RegistryEntry {
-  readonly id: string;
-  readonly priority: number;
-  /**
-   * Returns a pre-bound executor that runs the matched action, or null
-   * if this dispatcher doesn't handle the transcript. Binding the
-   * action into the closure lets `tryMatch` return one shape instead
-   * of a `{ dispatcher, action }` tuple the caller has to plumb back.
-   */
-  tryMatch(transcript: string): (() => Promise<ExecutionResult>) | null;
+export interface ToolEntry {
+  readonly name: string;
+  readonly description: string;
+  readonly inputSchema: Record<string, unknown>;
+  readonly zodShape: ZodRawShape;
+  /** Pre-bound: parses + executes, returning a uniform result. */
+  invoke(raw: unknown): Promise<ExecutionResult>;
 }
 
 /**
- * Wrap a typed dispatcher into a type-erased registry entry. Captures
- * the action in a closure so `tryMatch` callers don't have to think
- * about the dispatcher's action shape.
+ * Erase a typed tool into a uniform `ToolEntry`. Captures parsing +
+ * execution into a single `invoke()` so registry consumers don't
+ * have to know about each tool's input type.
  */
-export function asEntry<T>(dispatcher: Dispatcher<T>): RegistryEntry {
+export function asEntry<T>(tool: Tool<T>): ToolEntry {
   return {
-    id: dispatcher.id,
-    priority: dispatcher.priority,
-    tryMatch(transcript) {
-      const action = dispatcher.match(transcript);
-      if (action === null) return null;
-      return () => dispatcher.execute(action);
+    name: tool.name,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    zodShape: tool.zodShape,
+    async invoke(raw) {
+      let parsed: T;
+      try {
+        parsed = tool.parseInput(raw);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : String(err);
+        return {
+          summary: `Invalid arguments for ${tool.name}: ${message}`,
+          succeeded: false,
+          error: `bad_arguments: ${message}`,
+          bashCommands: [],
+        };
+      }
+      return tool.execute(parsed);
     },
   };
 }

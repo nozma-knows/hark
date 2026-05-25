@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { defaultStore, type ConversationStore } from "./conversation.ts";
-import { tryMatch } from "./dispatch/index.ts";
 import {
   createAgentClient,
   detectAgentAuth,
@@ -10,22 +9,24 @@ import type { ClaudeUsage, SdkErrorCode } from "./sdkStream.ts";
 import type { LlmErrorCode } from "./llm/toolLoop.ts";
 
 /**
- * Voice command → macOS action. Two routes:
+ * Voice command → macOS action. Always goes through the LLM with the
+ * full structured tool registry: the model is the router. Previously
+ * we ran a regex-first dispatcher pass that ate any phrase starting
+ * with a known verb ("open …") before the LLM saw it — that gave
+ * sub-100ms latency on the common path but failed on complex compound
+ * commands the regex misread. The LLM does a much better job picking
+ * the right structured tool (openApp vs openInChromeProfile vs
+ * createJuggleTask) because it reads the whole sentence, and prompt
+ * caching keeps Haiku 4.5 latency tight in the common case.
  *
- *   1. Dispatcher path — deterministic match on common voice command
- *      shapes ("open Linear", "take a screenshot", …). Sub-100ms, free,
- *      bypasses the LLM and the user's settings.json entirely. Ships
- *      ~90% of voice commands by hit rate.
+ * Transport is picked by `detectAgentAuth`:
+ *   - ANTHROPIC_API_KEY → MessagesClient (Haiku 4.5 + cache + tools).
+ *   - subscription OAuth → SdkClient (Agent SDK with MCP-exposed tools).
+ *   - neither → "no_auth" error result so the pill renders cleanly.
  *
- *   2. LLM fallback — for anything dispatchers don't claim. Picks the
- *      Messages API client (Haiku 4.5 + prompt caching) when the user
- *      has an ANTHROPIC_API_KEY, or the Claude Agent SDK client when
- *      they only have subscription OAuth. Both run through verification
- *      (no fake-success pills) and surface a uniform result shape.
- *
- * The wire result includes telemetry fields so post-incident triage
- * can answer "which path ran?" / "did Bash actually fire?" without
- * tailing log files.
+ * The wire result keeps telemetry fields (`route`, `bashCommands`,
+ * `llmTurns`) so post-incident triage can answer "which path ran?
+ * what actually executed?" without tailing log files.
  */
 
 export const ExecuteCommandParams = z.object({
@@ -36,13 +37,11 @@ export type ExecuteCommandParams = z.infer<typeof ExecuteCommandParams>;
 export interface ExecuteCommandResult {
   summary: string;
   succeeded: boolean;
-  /** Which code path produced this result. */
-  route: "dispatcher" | "llm-messages" | "llm-sdk" | "no-auth";
-  /** Stable id of the dispatcher that fired, when `route === "dispatcher"`. */
-  dispatcherId?: string | undefined;
-  /** Every Bash command actually executed, in order. */
+  /** Which transport produced this result. */
+  route: "llm-messages" | "llm-sdk" | "no-auth";
+  /** Every bash command the tools actually executed, in order. */
   bashCommands: string[];
-  /** Assistant turns observed (0 for the dispatcher path). */
+  /** Assistant turns observed. */
   llmTurns: number;
   /** Total wall-clock for the whole command. */
   latencyMs: number;
@@ -50,11 +49,7 @@ export interface ExecuteCommandResult {
   usage?: ClaudeUsage | undefined;
 }
 
-export type ExecuteCommandErrorCode =
-  | SdkErrorCode
-  | LlmErrorCode
-  | "dispatcher_failed"
-  | "no_auth";
+export type ExecuteCommandErrorCode = SdkErrorCode | LlmErrorCode | "no_auth";
 
 /**
  * Cached agent client. Auth detection reads env, which is stable across
@@ -99,29 +94,6 @@ export async function executeCommand(
   const { transcript } = ExecuteCommandParams.parse(raw);
   const store = deps.conversationStore ?? defaultStore;
 
-  // 1. Dispatcher path. Dispatchers are intent-matched by regex, not
-  //    by language model — they don't need history to fire. But we
-  //    DO record their results so a follow-up that falls through to
-  //    the LLM ("now share that screenshot") still sees the prior
-  //    action in its context.
-  const matched = tryMatch(transcript);
-  if (matched !== null) {
-    const result = await matched.execute();
-    store.record({ transcript, summary: result.summary });
-    return {
-      summary: result.summary,
-      succeeded: result.succeeded,
-      route: "dispatcher",
-      dispatcherId: matched.id,
-      bashCommands: result.bashCommands,
-      llmTurns: 0,
-      latencyMs: Date.now() - start,
-      ...(result.error ? { errorCode: "dispatcher_failed" as const } : {}),
-    };
-  }
-
-  // 2. LLM fallback — pull recent turns BEFORE the call so the model
-  //    can resolve pronouns / "now" / "also" against actual context.
   const client = getAgentClient();
   if (client === null) {
     return {
@@ -135,6 +107,8 @@ export async function executeCommand(
     };
   }
 
+  // Pull recent turns BEFORE the call so the model can resolve
+  // pronouns / "now" / "also" against actual context.
   const recentTurns = store.recentTurns();
   const r = await client.executeCommand(transcript, { recentTurns });
   // Record AFTER the call so the new turn isn't visible to itself

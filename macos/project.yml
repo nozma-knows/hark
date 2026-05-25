@@ -174,9 +174,9 @@ targets:
         #   2. generate_keys                        (one-time)
         #   3. paste the printed public key into SUPublicEDKey below
         #   4. flip SUEnableAutomaticChecks to true
-        SUEnableAutomaticChecks: false
+        SUEnableAutomaticChecks: true
         SUFeedURL: "https://dl.tellhark.com/appcast.xml"
-        SUPublicEDKey: ""
+        SUPublicEDKey: "rm7t+7FT9dT0LA7ooJ5fTHjb5erKX8kX270fmyMY5DM="
         SUScheduledCheckInterval: 86400
         NSHighResolutionCapable: true
         # Only CFBundleIconName — when CFBundleIconFile is also set, macOS

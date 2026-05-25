@@ -29,14 +29,20 @@ struct OnboardingPermissionStep: View {
     let status: OnboardingStepStatus
 
     /// `true` once the user has clicked the primary action at least
-    /// once. After the first click we change the affordance from "Allow"
-    /// to "Open Settings" because subsequent clicks won't re-trigger the
-    /// system prompt — the user has to flip the toggle in System Settings.
+    /// once. Used to decide whether to surface the secondary "Restart
+    /// Hark to apply" recovery link — no point offering it before the
+    /// user has tried the normal path.
     let hasRequested: Bool
 
-    /// Invoked when the user clicks the primary action. The owning step
-    /// view decides whether to call the OS prompt API or jump straight
-    /// to System Settings (depending on `hasRequested`).
+    /// Label rendered on the primary action button. Differs by step:
+    /// "Allow" for microphone (in-app dialog), "Open System Settings"
+    /// for accessibility / input monitoring (where macOS only permits
+    /// the toggle to be flipped in Settings). Letting the step view
+    /// dictate the label removes the dual-action confusion where we'd
+    /// say "Allow" but actually trigger a Settings jump.
+    let primaryActionLabel: String
+
+    /// Invoked when the user clicks the primary action.
     let onPrimaryAction: () -> Void
 
     /// Invoked when the user clicks "Restart Hark to apply" — the
@@ -86,15 +92,11 @@ struct OnboardingPermissionStep: View {
             EmptyView()
         } else {
             Button(action: onPrimaryAction) {
-                Text(buttonLabel)
+                Text(primaryActionLabel)
                     .frame(maxWidth: 220)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
         }
-    }
-
-    private var buttonLabel: String {
-        hasRequested ? "Open System Settings" : "Allow"
     }
 }

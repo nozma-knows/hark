@@ -26,30 +26,25 @@ struct OnboardingTestStep: View {
         case failed
     }
 
+    /// Compact body used inside the onboarding wizard. The wrapping
+    /// `OnboardingStepLayout` already provides the icon, title, and
+    /// outer padding, so this view focuses purely on the recording
+    /// affordance and result block.
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "waveform.badge.checkmark")
-                .font(.system(size: 36))
-                .foregroundStyle(.tint)
-                .padding(.top, 8)
-
-            Text("Try it now")
-                .font(.title3.weight(.semibold))
-
+        VStack(spacing: 14) {
             Text(instruction)
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 8)
 
             recordButton
-                .padding(.vertical, 4)
 
             resultBlock
                 .frame(minHeight: 60, alignment: .top)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
     }
 
     // MARK: - Subviews

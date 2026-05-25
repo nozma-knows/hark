@@ -125,7 +125,11 @@ struct OnboardingView: View {
                 actionExplanation: micExplanation,
                 status: status,
                 hasRequested: permissions.microphone != .undetermined,
-                onPrimaryAction: handleMicrophoneAction
+                onPrimaryAction: handleMicrophoneAction,
+                // Mic detection goes through AVFoundation — granted/denied/
+                // undetermined is unambiguous. No "override" escape hatch
+                // needed here.
+                onAcknowledgeGranted: nil
             )
         }
     }
@@ -147,11 +151,12 @@ struct OnboardingView: View {
         ) {
             OnboardingPermissionStep(
                 actionExplanation:
-                "After clicking, toggle Hark on under Privacy & Security → Accessibility. "
+                "Toggle Hark on under Privacy & Security → Accessibility. "
                     + "The wizard advances automatically.",
                 status: status,
                 hasRequested: accessibilityRequested,
-                onPrimaryAction: handleAccessibilityAction
+                onPrimaryAction: handleAccessibilityAction,
+                onAcknowledgeGranted: { model.acknowledgeGranted(.accessibility) }
             )
         }
     }
@@ -177,7 +182,8 @@ struct OnboardingView: View {
                     + "Without this, Hark would silently miss every Fn keypress.",
                 status: status,
                 hasRequested: inputMonitoringRequested,
-                onPrimaryAction: handleInputMonitoringAction
+                onPrimaryAction: handleInputMonitoringAction,
+                onAcknowledgeGranted: { model.acknowledgeGranted(.inputMonitoring) }
             )
         }
     }
@@ -244,15 +250,34 @@ struct OnboardingView: View {
     }
 
     private func handleAccessibilityAction() {
-        permissions.promptAccessibility()
-        permissions.openAccessibilitySettings()
-        accessibilityRequested = true
+        // First click: trigger the system-owned prompt. On macOS 14+ the
+        // prompt dialog already has an "Open System Settings" button —
+        // letting the user choose whether to leave Hark beats yanking
+        // them away unconditionally. Subsequent clicks (when the OS
+        // won't re-prompt because it remembers the prior denial) jump
+        // straight to the Settings pane and start fast-polling so the
+        // grant flip is picked up within 250 ms.
+        if accessibilityRequested {
+            permissions.openAccessibilitySettings()
+        } else {
+            permissions.promptAccessibility()
+            permissions.startFastPolling()
+            accessibilityRequested = true
+        }
     }
 
     private func handleInputMonitoringAction() {
-        permissions.requestInputMonitoring()
-        permissions.openInputMonitoringSettings()
-        inputMonitoringRequested = true
+        // Same two-phase pattern as accessibility: first click goes
+        // through the system prompt (which itself surfaces a "Open
+        // System Settings" button when appropriate); later clicks jump
+        // directly to the Input Monitoring pane.
+        if inputMonitoringRequested {
+            permissions.openInputMonitoringSettings()
+        } else {
+            permissions.requestInputMonitoring()
+            permissions.startFastPolling()
+            inputMonitoringRequested = true
+        }
     }
 
     private func claudeBadge(for status: OnboardingStepStatus) -> OnboardingStepBadge? {

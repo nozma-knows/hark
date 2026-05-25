@@ -48,6 +48,7 @@ export const screencapture: Dispatcher<ScreencaptureAction> = {
     return {
       summary: "Screenshot cancelled or failed",
       succeeded: false,
+      errorCode: "bash_failed",
       error: result.stderr.trim() || `exit ${result.exitCode}`,
       bashCommands: [result.command],
     };

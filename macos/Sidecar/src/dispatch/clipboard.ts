@@ -53,6 +53,7 @@ export const clipboard: Dispatcher<ClipboardAction> = {
     return {
       summary: "Couldn't copy to clipboard",
       succeeded: false,
+      errorCode: "bash_failed",
       error: stderr.trim() || `exit ${exitCode}`,
       bashCommands: [command],
     };

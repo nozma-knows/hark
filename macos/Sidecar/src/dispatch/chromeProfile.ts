@@ -51,10 +51,15 @@ export const chromeProfile: Dispatcher<ChromeProfileAction> = {
   async execute({ url, profile }): Promise<ExecutionResult> {
     const resolved = await resolveProfile(profile.name);
     if (resolved === null) {
+      // Escalatable: the profile name the user spoke doesn't match any
+      // installed Chrome profile. Hand the original transcript to the
+      // LLM, which can interpret looser phrasings ("my main one") that
+      // the dispatcher's exact-then-substring matcher can't.
       return {
         summary: `Couldn't find a Chrome profile matching "${profile.name}"`,
         succeeded: false,
-        error: "profile_not_found",
+        errorCode: "profile_not_found",
+        error: `no Chrome profile matched "${profile.name}"`,
         bashCommands: [],
       };
     }
@@ -77,6 +82,7 @@ export const chromeProfile: Dispatcher<ChromeProfileAction> = {
     return {
       summary: `Couldn't open ${url} in ${resolved.name}`,
       succeeded: false,
+      errorCode: "bash_failed",
       error: result.stderr.trim() || `exit ${result.exitCode}`,
       bashCommands: [result.command],
     };

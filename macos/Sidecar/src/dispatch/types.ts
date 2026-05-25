@@ -1,3 +1,5 @@
+import type { DispatcherErrorCode } from "./escalation.ts";
+
 /**
  * Contracts shared by every dispatcher. Each dispatcher lives in
  * its own file under `dispatch/` with a small action type private
@@ -41,8 +43,14 @@ export interface ExecutionResult {
   /** Human-readable summary shown in the pill. */
   summary: string;
   succeeded: boolean;
-  /** Set when `succeeded` is false; surfaced in logs, not the pill. */
+  /** Free-form, human-readable error detail. Surfaced in logs, not in
+   *  the pill copy, and never matched on programmatically — use
+   *  `errorCode` for that. */
   error?: string | undefined;
+  /** Machine-readable failure classification. Drives the escalation
+   *  flow: `executeCommand` falls through to the LLM when this code
+   *  is escalatable (see `escalation.ts`). */
+  errorCode?: DispatcherErrorCode | undefined;
   /** Every bash command we actually ran on the user's machine. */
   bashCommands: string[];
 }

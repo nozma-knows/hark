@@ -78,4 +78,22 @@ describe("openApp.match", () => {
     expect(openApp.match(normalize("Open Linear please"))?.canonical).toBe("Linear");
     expect(openApp.match(normalize("Open up Linear, thanks."))?.canonical).toBe("Linear");
   });
+
+  // MARK: - Escalation contract
+
+  test("execute() tags missing apps with app_not_installed (escalatable)", async () => {
+    // This is the failure path that triggers LLM escalation. A
+    // transcript like "open notes and take me to a new note" matches
+    // the dispatcher (the regex captures the compound tail as the
+    // app name) but no app by that compound name exists. The errorCode
+    // MUST be `app_not_installed` so executeCommand's escalation check
+    // routes the transcript to the LLM instead of surfacing a hard
+    // error to the user.
+    const result = await openApp.execute({
+      canonical: "Thisappdoesnotexistinanyworld",
+    });
+    expect(result.succeeded).toBe(false);
+    expect(result.errorCode).toBe("app_not_installed");
+    expect(result.bashCommands).toEqual([]);
+  });
 });

@@ -52,10 +52,17 @@ export const openApp: Dispatcher<OpenAppAction> = {
   async execute({ canonical }): Promise<ExecutionResult> {
     const resolved = await canonicalAppName(canonical);
     if (resolved === null) {
+      // Escalatable: the regex took the whole transcript and resolved
+      // to "no app by that name." Compound transcripts like "open
+      // Notes and take me to a new note" land here — the LLM can
+      // interpret the multi-part intent correctly, so we tag the
+      // failure for escalation rather than surfacing it as a hard
+      // error to the user.
       return {
         summary: `${canonical} isn't installed`,
         succeeded: false,
-        error: "app_not_installed",
+        errorCode: "app_not_installed",
+        error: `no app found matching "${canonical}"`,
         bashCommands: [],
       };
     }
@@ -70,6 +77,7 @@ export const openApp: Dispatcher<OpenAppAction> = {
     return {
       summary: `Couldn't open ${resolved}`,
       succeeded: false,
+      errorCode: "bash_failed",
       error: result.stderr.trim() || `exit ${result.exitCode}`,
       bashCommands: [result.command],
     };

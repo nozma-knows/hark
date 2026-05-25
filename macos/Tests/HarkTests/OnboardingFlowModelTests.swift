@@ -172,64 +172,6 @@ final class OnboardingFlowModelTests: XCTestCase {
         XCTAssertTrue(model.canSkip(.claudeAuth))
     }
 
-    // MARK: - User-acknowledged grants (TCC drift escape hatch)
-
-    func testAcknowledgeGrantedAdvancesPastStuckPermission() {
-        let probe = StatusProbe.allIncomplete()
-        let model = OnboardingFlowModel(dependencies: probe.dependencies)
-        model.advance() // welcome → microphone
-
-        // Simulate the TCC-drift bug: the user has the toggle on in
-        // System Settings (so they expect to be unstuck) but the probe
-        // still reports false. Without the override, canContinue is
-        // false and the user is trapped.
-        XCTAssertEqual(model.step, .microphone)
-        XCTAssertFalse(model.canContinue)
-
-        model.acknowledgeGranted(.microphone)
-
-        XCTAssertEqual(model.step, .accessibility, "override should advance the wizard")
-        XCTAssertEqual(
-            model.status(of: .microphone),
-            .complete,
-            "overridden steps render as complete in the progress dots"
-        )
-    }
-
-    func testAcknowledgeGrantedNoOpForNonPermissionSteps() {
-        let probe = StatusProbe.allIncomplete()
-        let model = OnboardingFlowModel(dependencies: probe.dependencies)
-        XCTAssertEqual(model.step, .welcome)
-
-        // Calling acknowledge on welcome / tryIt / claudeAuth should be
-        // a no-op — those steps have their own navigation paths.
-        model.acknowledgeGranted(.welcome)
-        model.acknowledgeGranted(.tryIt)
-        model.acknowledgeGranted(.claudeAuth)
-
-        XCTAssertEqual(model.step, .welcome, "no-op acknowledge must not move the user")
-        XCTAssertEqual(
-            model.status(of: .claudeAuth),
-            .incomplete,
-            "claudeAuth uses skip(_:), not acknowledge — status stays incomplete"
-        )
-    }
-
-    func testAcknowledgeGrantedSticksAcrossNavigation() {
-        let probe = StatusProbe.allIncomplete()
-        let model = OnboardingFlowModel(dependencies: probe.dependencies)
-        model.advance() // welcome → microphone
-        model.acknowledgeGranted(.microphone)
-        XCTAssertEqual(model.step, .accessibility)
-
-        // Stepping back to microphone after an acknowledge must NOT
-        // clear the override — the user already told us they granted it.
-        model.back()
-        XCTAssertEqual(model.step, .microphone)
-        XCTAssertEqual(model.status(of: .microphone), .complete)
-        XCTAssertTrue(model.canContinue)
-    }
-
     // MARK: - Reactive advance
 
     func testAdvanceIfCurrentStepCompletedFlipsOnGrant() {

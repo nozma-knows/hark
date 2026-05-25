@@ -8,6 +8,8 @@ import SwiftUI
 /// Extracted from SettingsView so the parent stays a TabView shell;
 /// every other pane lives in its own file too.
 struct GeneralPane: View {
+    let pillPosition: PillPositionSettings
+
     /// Buffered user input for the crash-upload endpoint. Loaded from
     /// UserDefaults on first render; pushed back via "Save."
     @State private var endpointInput: String = CrashUploadPreferences.endpointString ?? ""
@@ -19,10 +21,49 @@ struct GeneralPane: View {
 
     var body: some View {
         Form {
+            pillPositionSection
             diagnosticsSection
             crashUploadsSection
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: - Pill position
+
+    private var pillPositionSection: some View {
+        Section {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Current position")
+                        .font(.callout.weight(.medium))
+                    Text(pillPosition.model.anchor.label)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Reset to center") {
+                    pillPosition.resetActive()
+                }
+                if pillPosition.hasAnyStoredAnchor() {
+                    Button("Reset all displays", role: .destructive) {
+                        pillPosition.resetAll()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        } header: {
+            Text("Pill position")
+        } footer: {
+            Text(
+                """
+                Drag the pill along the bottom of the screen to move it. \
+                Hold ⌘ to drag from anywhere on the pill. \
+                Position is remembered per display.
+                """
+            )
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: - Sections

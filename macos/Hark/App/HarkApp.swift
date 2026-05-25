@@ -43,6 +43,18 @@ struct HarkApp: App {
                 transcriber: delegate.transcriber,
                 claudeAuth: delegate.claudeAuth,
                 appState: delegate.appState,
+                pillPosition: PillPositionSettings(
+                    model: delegate.panelController.positionModel,
+                    hasAnyStoredAnchor: { [panel = delegate.panelController] in
+                        panel.hasAnyStoredAnchor
+                    },
+                    resetActive: { [panel = delegate.panelController] in
+                        panel.resetPositionOnActiveScreen()
+                    },
+                    resetAll: { [panel = delegate.panelController] in
+                        panel.resetPositionOnAllScreens()
+                    }
+                ),
                 onResetConversation: { [sidecar = delegate.sidecar] in
                     // Fire-and-forget: the sidecar's resetConversation
                     // handler is a single store.clear() call that never

@@ -39,6 +39,23 @@ final class E2ETranscribePipelineTests: XCTestCase {
         throw XCTSkip("no Whisper model downloaded — `await transcriber.select(.tinyEn)` to populate.")
     }
 
+    /// Load `model` and skip if WhisperKit couldn't actually bring it up
+    /// to `.ready`. `isDownloaded` only checks for the AudioEncoder
+    /// marker file, but CI runners can be left with a half-finished
+    /// download (encoder present, weight files still `.incomplete`),
+    /// which makes `loadIfNeeded` transition to `.failed` rather than
+    /// `.ready`. Without this guard the subsequent `transcribe` throws
+    /// `modelNotLoaded` and the test fails noisily on what is really an
+    /// environmental issue.
+    private func loadModelOrSkip(_ model: WhisperModel, on transcriber: Transcriber) async throws {
+        await transcriber.loadIfNeeded(model)
+        guard case .ready = transcriber.state else {
+            throw XCTSkip(
+                "Whisper model couldn't load (state=\(transcriber.state)) — likely a partial download on this runner."
+            )
+        }
+    }
+
     func testAudioToTranscriptProducesNonEmpty() async throws {
         // The end-to-end claim: `say` audio at 16 kHz Float32, fed into
         // Transcriber.transcribe, produces a non-empty string. We don't
@@ -52,7 +69,7 @@ final class E2ETranscribePipelineTests: XCTestCase {
         let samples = try await synthesizeSamples(saying: "open linear application")
         XCTAssertGreaterThan(samples.count, 8000, "expected at least 0.5s of audio")
 
-        await transcriber.loadIfNeeded(model)
+        try await loadModelOrSkip(model, on: transcriber)
         let raw = try await transcriber.transcribe(samples: samples)
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertFalse(
@@ -72,7 +89,7 @@ final class E2ETranscribePipelineTests: XCTestCase {
         let model = try pickModel(for: transcriber)
 
         let samples = try await synthesizeSamples(saying: "open linear application")
-        await transcriber.loadIfNeeded(model)
+        try await loadModelOrSkip(model, on: transcriber)
         let transcript = try await transcriber.transcribe(samples: samples)
 
         let appState = AppState()

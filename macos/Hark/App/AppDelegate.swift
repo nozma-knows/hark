@@ -85,7 +85,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             transcriber: transcriberInstance,
             actions: PanelActions(
                 toggleRecording: { _ in /* wired below */ },
-                cancelProcessing: { /* wired below */ }
+                cancelProcessing: { /* wired below */ },
+                beginDrag: { /* wired below */ },
+                updateDrag: { _ in /* wired below */ },
+                endDrag: { _ in /* wired below */ }
             )
         )
         super.init()
@@ -104,12 +107,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey.onKeyUp = { trigger in
             Task { @MainActor in captured.handleHotkeyUp(trigger) }
         }
+        let panel = panelController
         panelController.actions = PanelActions(
             toggleRecording: { trigger in
                 Task { @MainActor in captured.togglePanelRecording(trigger) }
             },
             cancelProcessing: {
                 Task { @MainActor in captured.cancelProcessing() }
+            },
+            beginDrag: { [weak panel] in
+                panel?.beginDrag()
+            },
+            updateDrag: { [weak panel] translation in
+                panel?.updateDrag(translation: translation)
+            },
+            endDrag: { [weak panel] translation in
+                panel?.endDrag(translation: translation)
             }
         )
         // Auto-install / re-enable the global hotkey tap the instant the

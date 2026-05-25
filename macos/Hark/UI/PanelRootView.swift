@@ -3,10 +3,13 @@ import SwiftUI
 
 private let panelLogger = Logger(subsystem: "co.milbo.hark", category: "Panel")
 
-/// Wispr Flow-style pill UI at the bottom-center of the screen.
+/// Wispr Flow-style pill UI. The panel itself is generously sized so
+/// every state (idle, recording, transcript, command result) fits
+/// without resizing the underlying NSPanel; this view aligns the
+/// visible pill to the user-chosen edge inside that frame.
+///
 /// - Idle: barely-there capsule outline (~40×3); hover hit area matches.
-/// - Idle + hover: expands to a compact strip with the three shortcut chips
-///   (Fn, ⌃Fn, ⇧Fn) and a settings gear — no text labels, no dividers.
+/// - Idle + hover: expands to a compact strip with record / gear / help.
 /// - Recording: pulsing red dot + duration + mini bars
 /// - Transcribing / loading: spinner + label
 /// - Transcript ready: text + copy + dismiss
@@ -14,13 +17,23 @@ struct PanelRootView: View {
     @Bindable var appState: AppState
     @Bindable var recorder: AudioRecorder
     @Bindable var transcriber: Transcriber
+    @Bindable var positionModel: PillPositionModel
     let actions: PanelActions
+    /// Called when the visible pill's bounds change. The hosting view
+    /// uses the rect to restrict mouse hit-testing to just the pill —
+    /// clicks on the rest of the panel pass through to apps below.
+    let onPillBoundsChanged: (CGRect) -> Void
 
     /// Shared namespace for matchedGeometryEffect so the pill's background
     /// capsule smoothly resizes between hover-state (112pt wide) and
     /// recording-state (76pt wide) — instead of cross-fading two
     /// independently-sized views.
     @Namespace private var pillBackground
+
+    /// Coordinate-space name used by the pill content to report its
+    /// frame in the panel's local coordinates. Kept private + named so
+    /// other views can't accidentally read into it.
+    private static let panelCoordSpace = "co.milbo.hark.pillPanel"
 
     /// Seconds elapsed since the transcriber entered `.loading`. Ticks
     /// once per second while a load is in flight; SwiftUI re-evaluates
@@ -29,17 +42,47 @@ struct PanelRootView: View {
     @State private var loadingElapsed: TimeInterval = 0
 
     var body: some View {
-        VStack {
-            Spacer()
+        ZStack(alignment: alignment) {
+            // A fully transparent backdrop so the ZStack actually fills
+            // the panel — without it, alignment doesn't have a frame to
+            // anchor to and the pill renders at the natural origin.
+            Color.clear
             content
                 .padding(.bottom, 6)
+                .padding(.horizontal, edgePadding)
+                .scaleEffect(positionModel.isDragging ? 1.03 : 1)
+                .shadow(
+                    color: .black.opacity(positionModel.isDragging ? 0.55 : 0),
+                    radius: positionModel.isDragging ? 18 : 0,
+                    y: positionModel.isDragging ? 6 : 0
+                )
                 .animation(
                     .spring(response: 0.32, dampingFraction: 0.86),
                     value: mode
                 )
+                .animation(
+                    .spring(response: 0.28, dampingFraction: 0.82),
+                    value: positionModel.isDragging
+                )
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear
+                            .preference(
+                                key: PillBoundsKey.self,
+                                value: proxy.frame(in: .named(Self.panelCoordSpace))
+                            )
+                    }
+                )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.clear)
+        .coordinateSpace(name: Self.panelCoordSpace)
+        .onPreferenceChange(PillBoundsKey.self) { rect in
+            // PreferenceKey callbacks come in on the main actor in
+            // current SwiftUI, but the closure is `@Sendable` typed —
+            // hop explicitly so Swift 6 strict concurrency stays happy.
+            let captured = rect
+            Task { @MainActor in onPillBoundsChanged(captured) }
+        }
         .task(id: transcriber.loadingStartedAt) {
             // Drive the 1Hz tick that promotes a long-running load
             // into the "Warming up…" pill. The task is bound to
@@ -64,7 +107,8 @@ struct PanelRootView: View {
                 recorder: recorder,
                 isCommandMode: false,
                 actions: actions,
-                backgroundNamespace: pillBackground
+                backgroundNamespace: pillBackground,
+                isDraggable: false
             )
             .transition(.opacity)
         case let .processing(label):
@@ -80,7 +124,8 @@ struct PanelRootView: View {
             IdlePillView(
                 actions: actions,
                 recorder: recorder,
-                backgroundNamespace: pillBackground
+                backgroundNamespace: pillBackground,
+                isDraggable: true
             )
             .transition(.opacity)
         }
@@ -99,6 +144,43 @@ struct PanelRootView: View {
             loadingElapsedSeconds: transcriber.loadingStartedAt == nil ? nil : loadingElapsed
         )
     }
+
+    /// ZStack alignment derived from the anchor. The visible pill ends
+    /// up at the matching edge of the panel's wide stage, so the panel
+    /// origin + this alignment together place the pill where the user
+    /// parked it on screen.
+    private var alignment: Alignment {
+        switch positionModel.anchor {
+        case .left: .bottomLeading
+        case .center: .bottom
+        case .right: .bottomTrailing
+        }
+    }
+
+    /// Horizontal padding applied to the content for `.left` and
+    /// `.right` anchors so the visible pill doesn't sit flush against
+    /// the panel edge (which would visually touch the screen edge once
+    /// the panel is positioned at the same edge).
+    private var edgePadding: CGFloat {
+        switch positionModel.anchor {
+        case .left, .right: 8
+        case .center: 0
+        }
+    }
+}
+
+// MARK: - Hit-test plumbing
+
+/// SwiftUI preference key used by the active pill to report its
+/// rendered frame (in the panel's coordinate space) up to the root,
+/// which forwards it to `PassThroughHostingView` for hit-test masking.
+struct PillBoundsKey: PreferenceKey {
+    static let defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        // Only one pill is ever visible at a time; last-write-wins keeps
+        // the rect tracking the most recently laid-out pill.
+        value = nextValue()
+    }
 }
 
 // MARK: - Active states
@@ -108,6 +190,7 @@ private struct RecordingPill: View {
     let isCommandMode: Bool
     let actions: PanelActions
     let backgroundNamespace: Namespace.ID
+    let isDraggable: Bool
 
     var body: some View {
         // Entire pill is the stop button. The trigger argument is irrelevant
@@ -179,6 +262,7 @@ private struct RecordingPill: View {
         }
         .buttonStyle(.plain)
         .help("Click to stop")
+        .pillDraggable(isDraggable, actions: actions)
     }
 
     private func format(_ seconds: TimeInterval) -> String {
@@ -330,7 +414,7 @@ private struct ShortcutChip: View {
     }
 }
 
-private struct PillBackground: View {
+struct PillBackground: View {
     var body: some View {
         Capsule(style: .continuous)
             .fill(.black.opacity(0.82))
@@ -370,7 +454,15 @@ private struct MiniBars: View {
         appState: AppState(),
         recorder: AudioRecorder(),
         transcriber: Transcriber(),
-        actions: PanelActions(toggleRecording: { _ in }, cancelProcessing: {})
+        positionModel: PillPositionModel(),
+        actions: PanelActions(
+            toggleRecording: { _ in },
+            cancelProcessing: {},
+            beginDrag: {},
+            updateDrag: { _ in },
+            endDrag: { _ in }
+        ),
+        onPillBoundsChanged: { _ in }
     )
     .frame(width: 600, height: 120)
     .background(.gray.opacity(0.2))

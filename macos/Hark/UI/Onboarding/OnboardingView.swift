@@ -125,6 +125,7 @@ struct OnboardingView: View {
                 actionExplanation: micExplanation,
                 status: status,
                 hasRequested: permissions.microphone != .undetermined,
+                primaryActionLabel: micButtonLabel,
                 onPrimaryAction: handleMicrophoneAction,
                 // Mic detection goes through AVFoundation — granted/denied/
                 // undetermined is unambiguous. No "restart to apply"
@@ -155,6 +156,7 @@ struct OnboardingView: View {
                     + "themselves Accessibility. The wizard advances automatically once you toggle Hark on.",
                 status: status,
                 hasRequested: accessibilityRequested,
+                primaryActionLabel: "Open System Settings",
                 onPrimaryAction: handleAccessibilityAction,
                 onRestartToApply: { AppRelauncher.relaunch() }
             )
@@ -182,6 +184,7 @@ struct OnboardingView: View {
                     + "themselves Input Monitoring. Toggle Hark on and the wizard advances automatically.",
                 status: status,
                 hasRequested: inputMonitoringRequested,
+                primaryActionLabel: "Open System Settings",
                 onPrimaryAction: handleInputMonitoringAction,
                 onRestartToApply: { AppRelauncher.relaunch() }
             )
@@ -238,6 +241,17 @@ struct OnboardingView: View {
         }
     }
 
+    /// Button label for the microphone step. Unlike AX/IM, the mic
+    /// permission has a true in-app grant flow on first use — the
+    /// label reflects which action will actually happen.
+    private var micButtonLabel: String {
+        switch permissions.microphone {
+        case .undetermined: "Allow"
+        case .denied: "Open System Settings"
+        case .granted: "Allow"
+        }
+    }
+
     private func handleMicrophoneAction() {
         switch permissions.microphone {
         case .undetermined:
@@ -250,34 +264,28 @@ struct OnboardingView: View {
     }
 
     private func handleAccessibilityAction() {
-        // First click: trigger the system-owned prompt. On macOS 14+ the
-        // prompt dialog already has an "Open System Settings" button —
-        // letting the user choose whether to leave Hark beats yanking
-        // them away unconditionally. Subsequent clicks (when the OS
-        // won't re-prompt because it remembers the prior denial) jump
-        // straight to the Settings pane and start fast-polling so the
-        // grant flip is picked up within 250 ms.
-        if accessibilityRequested {
-            permissions.openAccessibilitySettings()
-        } else {
-            permissions.promptAccessibility()
-            permissions.startFastPolling()
-            accessibilityRequested = true
-        }
+        // No system dialog. On macOS 14+ calling AXIsProcessTrustedWithOptions
+        // can EITHER show a "Open System Settings / Deny" dialog OR
+        // auto-open Settings outright (varies by minor version) — when
+        // both happen the user sees a dialog asking them to do something
+        // we already did, which reads as the app deciding for them.
+        // Skip the dialog entirely and just take them to the right
+        // Settings pane. HotkeyManager already called AXIsProcessTrusted
+        // at launch, which is what registers Hark in the Accessibility
+        // list, so the toggle is already there waiting.
+        permissions.openAccessibilitySettings()
+        accessibilityRequested = true
     }
 
     private func handleInputMonitoringAction() {
-        // Same two-phase pattern as accessibility: first click goes
-        // through the system prompt (which itself surfaces a "Open
-        // System Settings" button when appropriate); later clicks jump
-        // directly to the Input Monitoring pane.
-        if inputMonitoringRequested {
-            permissions.openInputMonitoringSettings()
-        } else {
-            permissions.requestInputMonitoring()
-            permissions.startFastPolling()
-            inputMonitoringRequested = true
-        }
+        // Same reasoning as accessibility: IOHIDRequestAccess on
+        // Sonoma/Tahoe shows a notification AND can auto-open Settings,
+        // producing a confusing two-action experience. HotkeyManager
+        // already called IOHIDCheckAccess at launch (which registers
+        // Hark in the Input Monitoring list); we just need to take the
+        // user to the pane so they can toggle.
+        permissions.openInputMonitoringSettings()
+        inputMonitoringRequested = true
     }
 
     private func claudeBadge(for status: OnboardingStepStatus) -> OnboardingStepBadge? {

@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+/// Step-by-step first-run wizard. One step at a time, smart enough to
+/// skip permissions that are already granted on open and to auto-advance
+/// the moment the user flips a toggle in System Settings.
+///
+/// All navigation lives in `OnboardingFlowModel`; this view is just the
+/// renderer + the per-step content. State that's strictly UI-local
+/// (whether the user has clicked "Allow" once already) stays in
+/// `@State` here — the flow model only cares about objective system
+/// state.
 struct OnboardingView: View {
     @Bindable var permissions: PermissionsManager
     @Bindable var claudeAuth: ClaudeAuth
@@ -8,148 +17,222 @@ struct OnboardingView: View {
     @Bindable var transcriber: Transcriber
     let onComplete: () -> Void
 
+    @State private var model: OnboardingFlowModel
+    /// Tracks per-permission "have we shown the system prompt yet."
+    /// Microphone status uses `.undetermined` for this; accessibility +
+    /// input monitoring don't expose that state, so we track locally.
+    /// Reset implicitly each time the window opens (this is `@State`).
+    @State private var accessibilityRequested = false
+    @State private var inputMonitoringRequested = false
+
+    init(
+        permissions: PermissionsManager,
+        claudeAuth: ClaudeAuth,
+        recorder: AudioRecorder,
+        transcriber: Transcriber,
+        onComplete: @escaping () -> Void
+    ) {
+        self.permissions = permissions
+        self.claudeAuth = claudeAuth
+        self.recorder = recorder
+        self.transcriber = transcriber
+        self.onComplete = onComplete
+        _model = State(initialValue: OnboardingFlowModel(
+            dependencies: .live(permissions: permissions, claudeAuth: claudeAuth)
+        ))
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                header
-                    .padding(.top, 28)
-                    .padding(.bottom, 18)
+        VStack(spacing: 0) {
+            OnboardingProgressDots(
+                steps: OnboardingStep.ordered,
+                current: model.step,
+                statusOf: model.status(of:)
+            )
+            .padding(.top, 8)
 
-                VStack(spacing: 12) {
-                    microphoneCard
-                    accessibilityCard
-                    inputMonitoringCard
-                    claudeCard
-                }
-                .padding(.horizontal, 24)
+            Divider().opacity(0.5)
 
-                // Test-recording step only unlocks once the OS perms +
-                // (recommended) Claude auth are squared away. The user
-                // has nothing useful to record otherwise.
-                if permissions.allGranted {
-                    Divider()
-                        .padding(.horizontal, 24)
-                        .padding(.top, 16)
-                    OnboardingTestStep(
-                        recorder: recorder,
-                        transcriber: transcriber
-                    )
-                    .padding(.horizontal, 24)
-                }
-
-                footer
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
-                    .padding(.top, 16)
-            }
+            currentStepView
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                .id(model.step)
+                .animation(.easeInOut(duration: 0.16), value: model.step)
         }
-        .frame(width: 480, height: 600)
-    }
-
-    private var header: some View {
-        VStack(spacing: 8) {
-            Image("BrandMark")
-                .resizable()
-                .renderingMode(.template)
-                .aspectRatio(contentMode: .fit)
-                .foregroundStyle(.tint)
-                .frame(width: 56, height: 56)
-            Text("Welcome to Hark")
-                .font(.title2.weight(.semibold))
-            Text("Two macOS permissions plus Claude auth, then you're set.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+        .frame(width: 520, height: 520)
+        .onChange(of: permissions.microphone) { _, _ in model.advanceIfCurrentStepCompleted() }
+        .onChange(of: permissions.accessibilityTrusted) { _, _ in model.advanceIfCurrentStepCompleted() }
+        .onChange(of: permissions.inputMonitoringGranted) { _, _ in model.advanceIfCurrentStepCompleted() }
+        .onChange(of: claudeAuth.method) { _, _ in model.advanceIfCurrentStepCompleted() }
+        .onChange(of: model.isFlowComplete) { _, complete in
+            if complete { onComplete() }
         }
     }
 
-    private var microphoneCard: some View {
-        PermissionCard(
+    // MARK: - Step rendering
+
+    @ViewBuilder private var currentStepView: some View {
+        switch model.step {
+        case .welcome:
+            welcomeStep
+        case .microphone:
+            microphoneStep
+        case .accessibility:
+            accessibilityStep
+        case .inputMonitoring:
+            inputMonitoringStep
+        case .claudeAuth:
+            claudeStep
+        case .tryIt:
+            tryItStep
+        }
+    }
+
+    private var welcomeStep: some View {
+        OnboardingStepLayout(
+            systemImage: "waveform.circle.fill",
+            title: "Welcome to Hark",
+            description: "Hold Fn, speak, release. Hark transcribes locally and polishes with Claude.",
+            statusBadge: nil,
+            canGoBack: model.canGoBack,
+            onBack: { model.back() },
+            continueLabel: "Get started",
+            continueEnabled: true,
+            onContinue: { model.advance() },
+            skipLabel: nil,
+            onSkip: nil
+        ) {
+            OnboardingWelcomeStep()
+        }
+    }
+
+    private var microphoneStep: some View {
+        let status = model.status(of: .microphone)
+        return OnboardingStepLayout(
             systemImage: "mic.fill",
             title: "Microphone",
-            description: "Capture your voice locally to transcribe.",
-            status: micCardStatus,
-            actionLabel: micCardActionLabel,
-            action: micCardAction
-        )
+            description: "Hark records your audio on-device so WhisperKit can transcribe it.",
+            statusBadge: status == .complete ? .granted : nil,
+            canGoBack: model.canGoBack,
+            onBack: { model.back() },
+            continueLabel: "Continue",
+            continueEnabled: model.canContinue,
+            onContinue: { model.advance() },
+            skipLabel: nil,
+            onSkip: nil
+        ) {
+            OnboardingPermissionStep(
+                actionExplanation: micExplanation,
+                status: status,
+                hasRequested: permissions.microphone != .undetermined,
+                onPrimaryAction: handleMicrophoneAction
+            )
+        }
     }
 
-    private var accessibilityCard: some View {
-        PermissionCard(
+    private var accessibilityStep: some View {
+        let status = model.status(of: .accessibility)
+        return OnboardingStepLayout(
             systemImage: "keyboard",
             title: "Accessibility",
-            description: "Watch for the global hotkey when Hark isn't focused.",
-            status: axCardStatus,
-            actionLabel: axCardActionLabel,
-            action: axCardAction
-        )
+            description: "Required so Hark can watch for the Fn (🌐) key even when another app is focused.",
+            statusBadge: status == .complete ? .granted : nil,
+            canGoBack: model.canGoBack,
+            onBack: { model.back() },
+            continueLabel: "Continue",
+            continueEnabled: model.canContinue,
+            onContinue: { model.advance() },
+            skipLabel: nil,
+            onSkip: nil
+        ) {
+            OnboardingPermissionStep(
+                actionExplanation:
+                "After clicking, toggle Hark on under Privacy & Security → Accessibility. "
+                    + "The wizard advances automatically.",
+                status: status,
+                hasRequested: accessibilityRequested,
+                onPrimaryAction: handleAccessibilityAction
+            )
+        }
     }
 
-    private var inputMonitoringCard: some View {
-        PermissionCard(
+    private var inputMonitoringStep: some View {
+        let status = model.status(of: .inputMonitoring)
+        return OnboardingStepLayout(
             systemImage: "keyboard.badge.eye",
             title: "Input Monitoring",
-            description: "Required (Catalina+) for the Fn key tap to receive events.",
-            status: imCardStatus,
-            actionLabel: imCardActionLabel,
-            action: imCardAction
-        )
+            description: "Catalina+ requires this for keyboard event taps to actually receive events.",
+            statusBadge: status == .complete ? .granted : nil,
+            canGoBack: model.canGoBack,
+            onBack: { model.back() },
+            continueLabel: "Continue",
+            continueEnabled: model.canContinue,
+            onContinue: { model.advance() },
+            skipLabel: nil,
+            onSkip: nil
+        ) {
+            OnboardingPermissionStep(
+                actionExplanation:
+                "Toggle Hark on under Privacy & Security → Input Monitoring. "
+                    + "Without this, Hark would silently miss every Fn keypress.",
+                status: status,
+                hasRequested: inputMonitoringRequested,
+                onPrimaryAction: handleInputMonitoringAction
+            )
+        }
     }
 
-    private var claudeCard: some View {
-        PermissionCard(
+    private var claudeStep: some View {
+        let status = model.status(of: .claudeAuth)
+        return OnboardingStepLayout(
             systemImage: "sparkles",
-            title: "Claude auth",
-            description: claudeDescription,
-            status: claudeCardStatus,
-            actionLabel: claudeCardActionLabel,
-            action: claudeCardAction
-        )
-    }
-
-    private var footer: some View {
-        HStack {
-            Button("Quit Hark") {
-                NSApplication.shared.terminate(nil)
-            }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.secondary)
-
-            Spacer()
-
-            Button("Continue") {
-                onComplete()
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .keyboardShortcut(.defaultAction)
-            // Continue gates on the two OS permissions only. Claude auth is
-            // strongly recommended but skippable — without it the user can
-            // still test recording / transcription; they just can't draft
-            // tickets until they wire up auth.
-            .disabled(!permissions.allGranted)
+            title: "Connect Claude",
+            description: "Hark needs Claude credentials to polish transcripts and run voice commands.",
+            statusBadge: claudeBadge(for: status),
+            canGoBack: model.canGoBack,
+            onBack: { model.back() },
+            continueLabel: status == .incomplete ? "Skip for now" : "Continue",
+            continueEnabled: true,
+            onContinue: claudeContinue,
+            skipLabel: nil,
+            onSkip: nil
+        ) {
+            OnboardingClaudeStep(claudeAuth: claudeAuth)
         }
     }
 
-    // MARK: - Mic card state mapping
+    private var tryItStep: some View {
+        OnboardingStepLayout(
+            systemImage: "waveform.badge.checkmark",
+            title: "Try it now",
+            description: "Record a short clip and watch WhisperKit transcribe it inline.",
+            statusBadge: nil,
+            canGoBack: model.canGoBack,
+            onBack: { model.back() },
+            continueLabel: "Done",
+            continueEnabled: true,
+            onContinue: { onComplete() },
+            skipLabel: "Skip",
+            onSkip: { onComplete() }
+        ) {
+            OnboardingTestStep(recorder: recorder, transcriber: transcriber)
+        }
+    }
 
-    private var micCardStatus: PermissionCard.Status {
+    // MARK: - Step actions
+
+    private var micExplanation: String {
         switch permissions.microphone {
-        case .granted: .granted
-        case .denied: .denied
-        case .undetermined: .pending
+        case .granted:
+            "Microphone access is granted."
+        case .undetermined:
+            "macOS will ask once. You can change this any time in System Settings."
+        case .denied:
+            "Hark needs microphone access to record audio. Re-enable it under Privacy & Security → Microphone."
         }
     }
 
-    private var micCardActionLabel: String {
-        switch permissions.microphone {
-        case .granted: "Granted"
-        case .denied: "Open Settings"
-        case .undetermined: "Grant"
-        }
-    }
-
-    private func micCardAction() {
+    private func handleMicrophoneAction() {
         switch permissions.microphone {
         case .undetermined:
             Task { await permissions.requestMicrophone() }
@@ -160,78 +243,31 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Accessibility card state mapping
-
-    private var axCardStatus: PermissionCard.Status {
-        permissions.accessibilityTrusted ? .granted : .pending
+    private func handleAccessibilityAction() {
+        permissions.promptAccessibility()
+        permissions.openAccessibilitySettings()
+        accessibilityRequested = true
     }
 
-    private var axCardActionLabel: String {
-        permissions.accessibilityTrusted ? "Granted" : "Open Settings"
+    private func handleInputMonitoringAction() {
+        permissions.requestInputMonitoring()
+        permissions.openInputMonitoringSettings()
+        inputMonitoringRequested = true
     }
 
-    private func axCardAction() {
-        if !permissions.accessibilityTrusted {
-            permissions.promptAccessibility()
-            permissions.openAccessibilitySettings()
+    private func claudeBadge(for status: OnboardingStepStatus) -> OnboardingStepBadge? {
+        switch status {
+        case .complete: .granted
+        case .skipped: .skipped
+        case .incomplete: nil
         }
     }
 
-    // MARK: - Input Monitoring card state mapping
-
-    private var imCardStatus: PermissionCard.Status {
-        permissions.inputMonitoringGranted ? .granted : .pending
-    }
-
-    private var imCardActionLabel: String {
-        permissions.inputMonitoringGranted ? "Granted" : "Open Settings"
-    }
-
-    private func imCardAction() {
-        if !permissions.inputMonitoringGranted {
-            permissions.requestInputMonitoring()
-            permissions.openInputMonitoringSettings()
-        }
-    }
-
-    // MARK: - Claude card state mapping
-
-    private var claudeCardStatus: PermissionCard.Status {
-        switch claudeAuth.method {
-        case .subscription, .apiKey: .granted
-        case .none: .pending
-        }
-    }
-
-    private var claudeDescription: String {
-        switch claudeAuth.method {
-        case let .subscription(source): "Subscription detected (\(source.rawValue))."
-        case let .apiKey(source): "ANTHROPIC_API_KEY detected (\(source.rawValue))."
-        case .none where claudeAuth.claudeBinaryPath != nil:
-            "Generate an OAuth token with the `claude` CLI."
-        case .none:
-            "Install Claude Code or set ANTHROPIC_API_KEY."
-        }
-    }
-
-    private var claudeCardActionLabel: String {
-        switch claudeAuth.method {
-        case .subscription, .apiKey: "Connected"
-        case .none where claudeAuth.claudeBinaryPath != nil: "Generate Token"
-        case .none: "Install"
-        }
-    }
-
-    private func claudeCardAction() {
-        switch claudeAuth.method {
-        case .subscription, .apiKey:
-            break
-        case .none:
-            if claudeAuth.claudeBinaryPath != nil {
-                claudeAuth.runSetupToken()
-            } else if let url = URL(string: "https://claude.com/code") {
-                NSWorkspace.shared.open(url)
-            }
+    private func claudeContinue() {
+        if model.status(of: .claudeAuth) == .incomplete {
+            model.skip(.claudeAuth)
+        } else {
+            model.advance()
         }
     }
 }

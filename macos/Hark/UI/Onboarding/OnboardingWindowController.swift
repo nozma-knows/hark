@@ -12,7 +12,7 @@ import SwiftUI
 /// Polling is the robust fallback.
 @MainActor
 final class OnboardingWindowController: NSObject {
-    private static let windowSize = NSSize(width: 480, height: 520)
+    private static let windowSize = NSSize(width: 520, height: 520)
     private static let pollInterval: TimeInterval = 0.5
 
     private let permissions: PermissionsManager

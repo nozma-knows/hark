@@ -12,6 +12,10 @@ struct SettingsView: View {
     let transcriber: Transcriber
     let claudeAuth: ClaudeAuth
     let appState: AppState
+    /// Position model + reset actions surfaced in GeneralPane's "Pill
+    /// position" section. Sourced from `PanelWindowController` so the
+    /// settings UI stays a pure observer of the panel's state.
+    let pillPosition: PillPositionSettings
     /// Resets the sidecar's rolling conversation history. Closure-injected
     /// so the Settings UI doesn't need direct access to `AgentSidecar`;
     /// the production binding lives in HarkApp.
@@ -19,7 +23,7 @@ struct SettingsView: View {
 
     var body: some View {
         TabView {
-            GeneralPane()
+            GeneralPane(pillPosition: pillPosition)
                 .tabItem { Label("General", systemImage: "gearshape") }
             HotkeyPane(hotkey: hotkey)
                 .tabItem { Label("Hotkey", systemImage: "keyboard") }
@@ -42,6 +46,12 @@ struct SettingsView: View {
         transcriber: Transcriber(),
         claudeAuth: ClaudeAuth(),
         appState: AppState(),
+        pillPosition: PillPositionSettings(
+            model: PillPositionModel(),
+            hasAnyStoredAnchor: { false },
+            resetActive: {},
+            resetAll: {}
+        ),
         onResetConversation: {}
     )
 }

@@ -9,6 +9,12 @@ struct IdlePillView: View {
     /// smoothly when transitioning hover ↔ recording (instead of two
     /// independent views fading in and out).
     let backgroundNamespace: Namespace.ID
+    /// True when the user can drag this pill to reposition it. Wired to
+    /// `mode == .idle` by `PanelRootView`; while recording, transcribing,
+    /// or showing a transcript / command result we leave the drag off so
+    /// the user can't accidentally fling the pill while reaching for a
+    /// stop / copy button.
+    let isDraggable: Bool
     @Environment(\.openSettings)
     private var openSettings
     @State private var pillHovered = false
@@ -68,6 +74,11 @@ struct IdlePillView: View {
             // position between the two states (hover 112pt ↔ recording
             // 76pt) — smooth shrink/grow on the transition instead of a
             // cross-fade.
+            //
+            // The capsule is also the drag handle for "move the pill":
+            // attaching the drag gesture to the background (not the
+            // buttons) lets users grab the empty space between buttons
+            // to reposition without losing button click behavior.
             Capsule(style: .continuous)
                 .fill(.black.opacity(isEngaged ? 0.82 : 0))
                 .overlay(
@@ -76,6 +87,8 @@ struct IdlePillView: View {
                 )
                 .shadow(color: .black.opacity(isEngaged ? 0.45 : 0), radius: 10, y: 3)
                 .matchedGeometryEffect(id: "pill", in: backgroundNamespace)
+                .contentShape(Capsule(style: .continuous))
+                .pillDraggable(isDraggable, actions: actions)
 
             // Outline fades out — the only thing visible at rest.
             Capsule(style: .continuous)
@@ -290,6 +303,12 @@ private struct ShortcutsPopover: View {
             shortcut: "⇧Fn",
             name: "Execute",
             description: "Voice command — run via Claude Agent SDK."
+        ),
+        Row(
+            id: "drag-pill",
+            shortcut: "Drag",
+            name: "Move pill",
+            description: "Drag the pill background to slide it left, center, or right."
         )
     ]
 

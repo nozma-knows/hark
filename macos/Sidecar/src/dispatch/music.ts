@@ -1,44 +1,24 @@
+import { z } from "zod";
 import { runArgv } from "../runBash.ts";
-import type { Dispatcher, ExecutionResult } from "./types.ts";
+import type { ExecutionResult, Tool } from "./types.ts";
 
 /**
- * Music.app transport controls — play, pause, next, previous, stop.
- * Originally deferred from the dispatcher set because AppleScript
- * dialects across Music.app versions had been brittle, but the
- * commands here are the documented stable surface (Music has
- * supported these since iTunes 4) and they're a high-volume voice
- * command shape that doesn't deserve an LLM round-trip.
- *
- * Priority 35 — runs after open-app (so "open Music" still routes to
- * launch-the-app rather than send-play-command-to-nothing). Inside
- * the music dispatcher we explicitly send `osascript` to Music; if
- * Music isn't running, AppleScript launches it as a side effect.
- *
- * "Play X" with a query is intentionally NOT handled here — that's
- * search-and-play, which is brittle across services (Apple Music vs
- * Spotify vs local library). Sticks to transport: fewer surprises.
+ * Music.app transport controls — play, pause, toggle, next, previous,
+ * stop. Sticks to the documented AppleScript verbs that have been
+ * stable across macOS versions. "Play X" with a query is intentionally
+ * NOT handled here — search-and-play is brittle across services
+ * (Apple Music vs Spotify vs local library), so it falls back to the
+ * `bash` escape hatch or `openUrl` for a specific Apple Music link.
  */
 
 type Command = "play" | "pause" | "toggle" | "next" | "previous" | "stop";
 
-interface MusicAction {
-  readonly command: Command;
-}
+const InputShape = {
+  command: z.enum(["play", "pause", "toggle", "next", "previous", "stop"]),
+};
+const Input = z.object(InputShape);
+type Input = z.infer<typeof Input>;
 
-/** Map normalized transcript patterns to the AppleScript command. */
-const PATTERNS: ReadonlyArray<{ pattern: RegExp; command: Command }> = [
-  { pattern: /^(?:play|resume|start)\s+(?:the\s+)?music$/, command: "play" },
-  { pattern: /^play$/, command: "play" },
-  { pattern: /^pause(?:\s+(?:the\s+)?music)?$/, command: "pause" },
-  { pattern: /^stop(?:\s+(?:the\s+)?music)?$/, command: "stop" },
-  { pattern: /^(?:next|skip)(?:\s+(?:song|track))?$/, command: "next" },
-  { pattern: /^(?:previous|back|prev)(?:\s+(?:song|track))?$/, command: "previous" },
-  { pattern: /^(?:toggle\s+)?(?:play\s*\/\s*pause|play\s+pause|playpause)$/, command: "toggle" },
-];
-
-/** AppleScript snippets per command. `playpause` is Music.app's official
- *  toggle verb; `next track` / `previous track` are the canonical skip
- *  forms that work whether or not Music is currently playing. */
 const APPLESCRIPT: Record<Command, string> = {
   play: 'tell application "Music" to play',
   pause: 'tell application "Music" to pause',
@@ -57,15 +37,25 @@ const SUMMARY: Record<Command, string> = {
   stop: "Stopped music",
 };
 
-export const music: Dispatcher<MusicAction> = {
-  id: "music",
-  priority: 35,
+export const musicControl: Tool<Input> = {
+  name: "musicControl",
+  description:
+    "Control Music.app transport — play/pause/toggle/next/previous/stop. Use this for plain transport commands ('play music', 'pause', 'skip', 'next song'). Does NOT search for a specific song — for that, fall through to bash with an AppleScript that names the track, or use openUrl with an Apple Music share link.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      command: {
+        type: "string",
+        enum: ["play", "pause", "toggle", "next", "previous", "stop"],
+        description: "Which transport command to issue.",
+      },
+    },
+    required: ["command"],
+  },
+  zodShape: InputShape,
 
-  match(transcript) {
-    for (const { pattern, command } of PATTERNS) {
-      if (pattern.test(transcript)) return { command };
-    }
-    return null;
+  parseInput(raw) {
+    return Input.parse(raw);
   },
 
   async execute({ command }): Promise<ExecutionResult> {

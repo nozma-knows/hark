@@ -1,27 +1,18 @@
+import { z } from "zod";
 import { runArgv } from "../runBash.ts";
-import type { Dispatcher, ExecutionResult } from "./types.ts";
+import type { ExecutionResult, Tool } from "./types.ts";
 
 /**
- * "Search Google for the weather in Tokyo" / "Search YouTube for whisper
- * kit tutorials" / "Search Gmail for emails from xfinity" — known
- * services with a stable search-URL pattern get routed deterministically
- * instead of paying for an LLM round-trip every time.
+ * Search a known web service for a query and open the result page in
+ * the user's default browser. The LLM picks this for "Search Google
+ * for X", "Find Y in Linear", "Look up Z on GitHub". For unknown
+ * services the model should fall back to `openUrl` with a manually
+ * composed search URL.
  *
- * Priority 15 — between chromeProfile (which handles `… in my X profile`)
- * and openUrl. Order matters: "Search Google in my work profile" should
- * route to chromeProfile, not here. We decline transcripts mentioning
- * `profile` so the more specific dispatcher wins.
- *
- * The service registry is the entire extensibility surface: adding a new
- * service is one line in `SERVICES` plus aliases. The LLM fallback still
- * exists for anything not in the registry, so we can ship a small
- * curated list and let Claude handle the long tail.
+ * The service set is intentionally small — extending it is one entry
+ * in `SERVICES`. The LLM doesn't need every long-tail service hardcoded
+ * because it can always pre-compose search URLs and call `openUrl`.
  */
-
-interface SearchAction {
-  readonly service: ServiceKey;
-  readonly query: string;
-}
 
 type ServiceKey =
   | "google"
@@ -32,108 +23,67 @@ type ServiceKey =
   | "notion";
 
 interface ServiceDefinition {
-  /** Display name used in the pill summary. */
   readonly displayName: string;
-  /** URL template; `{q}` is replaced with the encoded query. */
   readonly urlTemplate: string;
-  /** Voice-friendly aliases (lowercase, no trailing punctuation). */
-  readonly aliases: ReadonlyArray<string>;
 }
 
 const SERVICES: Record<ServiceKey, ServiceDefinition> = {
   google: {
     displayName: "Google",
     urlTemplate: "https://www.google.com/search?q={q}",
-    aliases: ["google"],
   },
   youtube: {
     displayName: "YouTube",
     urlTemplate: "https://www.youtube.com/results?search_query={q}",
-    aliases: ["youtube", "yt"],
   },
   gmail: {
     displayName: "Gmail",
     urlTemplate: "https://mail.google.com/mail/u/0/#search/{q}",
-    aliases: ["gmail", "my email", "my inbox", "email"],
   },
   linear: {
     displayName: "Linear",
     urlTemplate: "https://linear.app/search?q={q}",
-    aliases: ["linear"],
   },
   github: {
     displayName: "GitHub",
     urlTemplate: "https://github.com/search?q={q}",
-    aliases: ["github", "gh"],
   },
   notion: {
     displayName: "Notion",
     urlTemplate: "https://www.notion.so/search?q={q}",
-    aliases: ["notion"],
   },
 };
 
-/** Build the lookup table once: alias (lowercase) → service key. */
-const ALIAS_TO_KEY: ReadonlyMap<string, ServiceKey> = (() => {
-  const map = new Map<string, ServiceKey>();
-  for (const [key, def] of Object.entries(SERVICES) as Array<
-    [ServiceKey, ServiceDefinition]
-  >) {
-    for (const alias of def.aliases) map.set(alias, key);
-  }
-  return map;
-})();
+const InputShape = {
+  service: z.enum(["google", "youtube", "gmail", "linear", "github", "notion"]),
+  query: z.string().min(1, "query is required"),
+};
+const Input = z.object(InputShape);
+type Input = z.infer<typeof Input>;
 
-// Sorted longest-first so multi-word aliases ("my inbox") beat single-word
-// substrings ("my") during the prefix match.
-const SORTED_ALIASES: ReadonlyArray<string> = Array.from(ALIAS_TO_KEY.keys()).sort(
-  (a, b) => b.length - a.length
-);
+export const search: Tool<Input> = {
+  name: "search",
+  description:
+    "Search a known web service and open the result page. Supported services: google, youtube, gmail, linear, github, notion. The query is URL-encoded for you. For services not on this list, use openUrl with a manually-composed search URL instead.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      service: {
+        type: "string",
+        enum: Object.keys(SERVICES),
+        description: "The service to search.",
+      },
+      query: {
+        type: "string",
+        description: "The search query, raw — encoding is handled by the tool.",
+      },
+    },
+    required: ["service", "query"],
+  },
+  zodShape: InputShape,
 
-// Verb alternation without filler-word stripping — search aliases like
-// "my inbox" / "my email" rely on "my" being preserved as part of the
-// service token, unlike openApp where "my" is filler.
-const VERB_PREFIX = /^(?:search|find|look\s+up|google|look\s+for)\s+/;
-const FOR_SEPARATOR = /\s+for\s+/;
-
-export const search: Dispatcher<SearchAction> = {
-  id: "search",
-  priority: 15,
-
-  match(transcript) {
-    // "open X in Y profile" — let chromeProfile own these.
-    if (/\bprofile\b/.test(transcript)) return null;
-
-    // Strip the leading verb if present. We accept the shortcut form
-    // "google <query>" (no "for" needed) since that's a natural voice
-    // phrasing; for other services the "for" separator disambiguates
-    // the service from the query.
-    const verbStripped = transcript.replace(VERB_PREFIX, "");
-    if (verbStripped === transcript && !/^google\s+/.test(transcript)) {
-      // Verb didn't match — only the "google X" shortcut bypasses the verb.
-      return null;
-    }
-
-    // Two shapes to recognize:
-    //   1. "<service> for <query>"          — e.g. "youtube for whisper kit"
-    //   2. "google <query>"                 — shortcut verb directly to Google
-    const forMatch = verbStripped.match(FOR_SEPARATOR);
-    if (forMatch?.index !== undefined) {
-      const head = verbStripped.slice(0, forMatch.index).trim();
-      const tail = verbStripped.slice(forMatch.index + forMatch[0].length).trim();
-      const serviceKey = resolveService(head);
-      if (serviceKey && tail.length > 0) {
-        return { service: serviceKey, query: tail };
-      }
-      return null;
-    }
-
-    // "google <query>" — only Google supports the leading-verb shortcut.
-    const googleShortcut = transcript.match(/^google\s+(.+)$/);
-    if (googleShortcut?.[1]) {
-      return { service: "google", query: googleShortcut[1].trim() };
-    }
-    return null;
+  parseInput(raw) {
+    return Input.parse(raw);
   },
 
   async execute({ service, query }): Promise<ExecutionResult> {
@@ -156,18 +106,9 @@ export const search: Dispatcher<SearchAction> = {
   },
 };
 
-/** Match the longest-known alias appearing at the start of `head`. */
-function resolveService(head: string): ServiceKey | null {
-  const t = head.toLowerCase().trim();
-  for (const alias of SORTED_ALIASES) {
-    if (t === alias) return ALIAS_TO_KEY.get(alias) ?? null;
-  }
-  return null;
-}
-
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n - 1)}…` : s;
 }
 
-/** Exposed for the registry test so it can confirm the full alias set. */
+/** Exposed for tests so the alias set can be asserted. */
 export const _servicesForTests = SERVICES;

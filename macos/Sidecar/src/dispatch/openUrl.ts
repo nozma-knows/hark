@@ -1,56 +1,57 @@
+import { z } from "zod";
 import { runArgv } from "../runBash.ts";
-import type { Dispatcher, ExecutionResult } from "./types.ts";
+import type { ExecutionResult, Tool } from "./types.ts";
 
 /**
- * "Open youtube.com", "Open https://github.com", "Go to twitter dot com",
- * "Visit linear.app" — everything that resolves to a single URL handed
- * to macOS `open`, which picks the user's default browser.
+ * Open a URL in the user's default browser. The LLM picks this for
+ * any phrasing that resolves to a single URL: "Open youtube.com",
+ * "Go to https://github.com", "Visit linear.app". When the user
+ * names a specific Chrome profile ("…in my work profile"), the model
+ * should pick `openInChromeProfile` instead.
  *
- * Priority 20 (between chromeProfile at 10 and openApp at 30): the
- * presence of a real TLD or scheme is a strong signal that this is
- * URL-shaped, not an app name.
+ * The tool normalises voice quirks — "youtube dot com" → "youtube.com"
+ * — and prefixes `https://` if the input lacks a scheme.
  */
 
-interface OpenUrlAction {
-  readonly url: string;
-}
+const InputShape = {
+  url: z.string().min(1, "url is required"),
+};
+const Input = z.object(InputShape);
+type Input = z.infer<typeof Input>;
 
-// Voice transcripts often render "." as "dot" — handle both shapes.
-// Verb alternation mirrors openApp: bare verbs + compound forms +
-// optional filler words after the verb so "go to the news.ycombinator.com"
-// doesn't drag "the" into the URL.
-const URL_OPENER =
-  /^(?:open|go\s+to|navigate\s+to|visit|browse\s+to|pull\s+up)(?:\s+(?:up|the|a))?\s+(.+?)\s*$/;
-// Either an explicit scheme, OR a hostname.tld pattern, OR "word dot tld" voice phrasing.
-const URL_LIKE =
-  /^(?:https?:\/\/[^\s]+|[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+(?:\/[^\s]*)?|[a-z0-9-]+(?:\s+dot\s+[a-z0-9-]+)+(?:\/[^\s]*)?)$/i;
+export const openUrl: Tool<Input> = {
+  name: "openUrl",
+  description:
+    "Open a URL in the user's default browser. Accepts bare hostnames ('github.com'), spoken-form hostnames ('youtube dot com'), or fully-qualified URLs ('https://linear.app/issue/ENG-100'). The tool will add 'https://' if missing. Use this for plain navigation; use openInChromeProfile when the user names a Chrome profile, and use search when the user wants to query a service.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      url: {
+        type: "string",
+        description:
+          "The URL or hostname to open. Scheme will be added if missing.",
+      },
+    },
+    required: ["url"],
+  },
+  zodShape: InputShape,
 
-export const openUrl: Dispatcher<OpenUrlAction> = {
-  id: "open-url",
-  priority: 20,
-
-  match(transcript) {
-    const m = transcript.match(URL_OPENER);
-    if (!m) return null;
-    const raw = m[1]?.trim();
-    if (!raw) return null;
-    if (!URL_LIKE.test(raw)) return null;
-    // Don't claim phrases with "in X profile" — chromeProfile owns those.
-    if (/\bprofile\b/.test(transcript)) return null;
-    return { url: normalizeUrl(raw) };
+  parseInput(raw) {
+    return Input.parse(raw);
   },
 
   async execute({ url }): Promise<ExecutionResult> {
-    const result = await runArgv(["open", url]);
+    const normalized = normalizeUrl(url);
+    const result = await runArgv(["open", normalized]);
     if (result.exitCode === 0) {
       return {
-        summary: `Opened ${url}`,
+        summary: `Opened ${normalized}`,
         succeeded: true,
         bashCommands: [result.command],
       };
     }
     return {
-      summary: `Couldn't open ${url}`,
+      summary: `Couldn't open ${normalized}`,
       succeeded: false,
       error: result.stderr.trim() || `exit ${result.exitCode}`,
       bashCommands: [result.command],
@@ -58,14 +59,9 @@ export const openUrl: Dispatcher<OpenUrlAction> = {
   },
 };
 
-/**
- * Normalize voice-flavored URLs:
- *   - "youtube dot com" → "youtube.com"
- *   - "youtube.com"     → "https://youtube.com"
- *   - "https://x.com"   → unchanged
- */
 function normalizeUrl(raw: string): string {
-  let url = raw.replace(/\s+dot\s+/gi, ".");
-  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
-  return url;
+  let url = raw.trim().replace(/\s+dot\s+/gi, ".");
+  // Allow app schemes (linear://, notion://, raycast://) verbatim.
+  if (/^[a-z][a-z0-9+\-.]*:/i.test(url)) return url;
+  return `https://${url}`;
 }

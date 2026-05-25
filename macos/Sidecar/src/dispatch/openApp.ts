@@ -1,59 +1,54 @@
+import { z } from "zod";
 import { canonicalAppName, resolveAlias } from "./appCatalog.ts";
 import { runArgv } from "../runBash.ts";
-import type { Dispatcher, ExecutionResult } from "./types.ts";
+import type { ExecutionResult, Tool } from "./types.ts";
 
 /**
- * "Open Linear", "Launch Chrome", "Start Spotify" — the highest-volume
- * voice command shape by far. We only claim the match if the app is
- * actually installed (catalog lookup); a missing app falls through to
- * the LLM fallback so a phrasing like "open my email" can still be
- * interpreted as Mail by Claude.
+ * Launch a macOS application by name. The most common voice command
+ * shape by far ("Open Linear", "Launch Chrome", "Start Spotify").
  *
- * Priority 30 — lower (more specific) dispatchers like chromeProfile
- * (priority 10) can claim phrases that include "open … profile" before
- * we do.
+ * The tool is forgiving on the input — it tries the user's spoken
+ * name verbatim first, then an alias table (e.g. "chrome" →
+ * "Google Chrome", "code" → "Visual Studio Code"), then refuses
+ * cleanly if the app isn't installed. The LLM picks this tool when
+ * the user wants to launch an app and doesn't need any in-app
+ * action; for "open YouTube in my work profile" the model should
+ * pick `openInChromeProfile` instead.
  */
 
-interface OpenAppAction {
-  /** The exact bundle name to pass to `open -a`, with original casing. */
-  readonly canonical: string;
-}
+const InputShape = {
+  name: z.string().min(1, "app name is required"),
+};
+const Input = z.object(InputShape);
+type Input = z.infer<typeof Input>;
 
-// Verb alternation accepts the bare verbs plus "open up" / "fire up" /
-// "bring up" / "pull up" — all natural-sounding phrasings that voice
-// users routinely produce. The optional `(?:up|the|my|a)` after the
-// verb absorbs filler words ("open the Linear app", "open my email")
-// so they don't end up captured as part of the app name.
-const OPEN_APP_PATTERN =
-  /^(?:open|launch|start|fire\s+up|bring\s+up|pull\s+up)(?:\s+(?:up|the|my|a))?\s+(.+?)\s*(?:\s+app)?$/;
+export const openApp: Tool<Input> = {
+  name: "openApp",
+  description:
+    "Launch a macOS application by name. Accepts the user's spoken name (e.g. 'Linear', 'chrome', 'vs code') — a built-in alias table resolves common nicknames to canonical .app bundle names. If the app isn't installed, returns a clear error. Use this for plain 'open <app>' / 'launch <app>' commands. Do NOT use for opening a URL in an app — use openUrl or openInChromeProfile instead.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      name: {
+        type: "string",
+        description:
+          "The app's spoken name. The tool resolves aliases (chrome → Google Chrome, code → Visual Studio Code).",
+      },
+    },
+    required: ["name"],
+  },
+  zodShape: InputShape,
 
-export const openApp: Dispatcher<OpenAppAction> = {
-  id: "open-app",
-  priority: 30,
-
-  match(transcript) {
-    const m = transcript.match(OPEN_APP_PATTERN);
-    if (!m) return null;
-    const raw = m[1]?.trim();
-    if (!raw) return null;
-
-    // Don't claim transcripts that look like a URL — let openUrl handle them.
-    if (raw.includes(".") && /\.[a-z]{2,}/.test(raw)) return null;
-    // Don't claim "open X in Y profile" — chromeProfile owns that shape.
-    if (/\bprofile\b/.test(raw)) return null;
-
-    const aliased = resolveAlias(raw);
-    // We can't `await` in a sync `match` — schedule the existence check
-    // for `execute()` time. The dispatcher will claim the match and
-    // verify at execute time; if the app's gone we return a clear error.
-    return { canonical: aliased };
+  parseInput(raw) {
+    return Input.parse(raw);
   },
 
-  async execute({ canonical }): Promise<ExecutionResult> {
-    const resolved = await canonicalAppName(canonical);
+  async execute({ name }): Promise<ExecutionResult> {
+    const aliased = resolveAlias(name);
+    const resolved = await canonicalAppName(aliased);
     if (resolved === null) {
       return {
-        summary: `${canonical} isn't installed`,
+        summary: `${aliased} isn't installed`,
         succeeded: false,
         error: "app_not_installed",
         bashCommands: [],

@@ -1,69 +1,127 @@
 import { describe, expect, test } from "bun:test";
-import { tryMatch, _entriesForTests } from "../index.ts";
+import { buildToolRegistry, findTool } from "../registry.ts";
 
 /**
- * Registry-level tests — pin down the priority order and confirm that
- * the right dispatcher claims each canonical command shape.
+ * The tool registry is the LLM-visible surface. These tests catch the
+ * mistakes that would break that contract:
+ *
+ *   - Two tools sharing a name → the model can't disambiguate.
+ *   - JSON schemas / Zod shapes that disagree → SDK and Messages API
+ *     paths route the same transcript to different tools.
+ *   - Tool descriptions that are blank / too thin to teach the model
+ *     when to pick them.
+ *
+ * We don't test individual tool execution here — most tools shell out
+ * to macOS APIs (`open -a`, `osascript`, etc.) that can't be sensibly
+ * unit-tested without a real Mac. The integration smoke test for
+ * end-to-end execution lives in the Swift `AgentSidecarTests` suite.
  */
-describe("dispatch registry", () => {
-  test("priorities are sorted ascending (specific first)", () => {
-    const priorities = _entriesForTests.map((e) => e.priority);
-    const sorted = [...priorities].sort((a, b) => a - b);
-    expect(priorities).toEqual(sorted);
+
+describe("buildToolRegistry", () => {
+  test("registers a non-empty set of tools", () => {
+    const tools = buildToolRegistry();
+    expect(tools.length).toBeGreaterThan(5);
   });
 
-  test("chrome-profile claims 'open X in Y profile'", () => {
-    expect(tryMatch("Open youtube.com in my work profile")?.id).toBe("chrome-profile");
+  test("every tool has a unique name", () => {
+    const tools = buildToolRegistry();
+    const names = tools.map((t) => t.name);
+    const unique = new Set(names);
+    expect(unique.size).toBe(names.length);
   });
 
-  test("open-url claims '<verb> <domain>'", () => {
-    expect(tryMatch("Open github.com")?.id).toBe("open-url");
-    expect(tryMatch("Go to news.ycombinator.com")?.id).toBe("open-url");
+  test("every tool exposes a non-empty description", () => {
+    const tools = buildToolRegistry();
+    for (const t of tools) {
+      expect(t.description.length).toBeGreaterThan(20);
+    }
   });
 
-  test("shortcuts claims 'run X shortcut'", () => {
-    expect(tryMatch("Run shortcut Daily Briefing")?.id).toBe("shortcuts");
+  test("every tool exposes a JSON Schema with object root + properties", () => {
+    const tools = buildToolRegistry();
+    for (const t of tools) {
+      expect(t.inputSchema.type).toBe("object");
+      expect(t.inputSchema).toHaveProperty("properties");
+    }
   });
 
-  test("open-app claims '<verb> <app>'", () => {
-    expect(tryMatch("Open Linear")?.id).toBe("open-app");
-    expect(tryMatch("Launch Chrome")?.id).toBe("open-app");
+  test("every tool exposes a Zod raw shape matching the schema's property set", () => {
+    const tools = buildToolRegistry();
+    for (const t of tools) {
+      const props = Object.keys(
+        (t.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}
+      );
+      const zodKeys = Object.keys(t.zodShape);
+      // Same set of keys in both directions — proves the JSON schema
+      // and Zod shape describe the same input.
+      expect(zodKeys.sort()).toEqual(props.sort());
+    }
   });
 
-  test("screencapture claims 'take a screenshot'", () => {
-    expect(tryMatch("Take a screenshot")?.id).toBe("screencapture");
-    expect(tryMatch("Screenshot.")?.id).toBe("screencapture");
+  test("includes the bash escape hatch", () => {
+    const tools = buildToolRegistry();
+    expect(findTool(tools, "bash")).not.toBeNull();
   });
 
-  test("clipboard claims 'copy X to clipboard'", () => {
-    expect(tryMatch("Copy github.com to my clipboard")?.id).toBe("clipboard");
+  test("includes the core macOS automation tools", () => {
+    const tools = buildToolRegistry();
+    for (const name of [
+      "openApp",
+      "openUrl",
+      "openInChromeProfile",
+      "search",
+      "runShortcut",
+      "musicControl",
+      "screenshot",
+      "clipboardCopy",
+      "calendarEvent",
+      "composeMail",
+      "systemToggle",
+      "windowControl",
+      "runAlias",
+    ]) {
+      expect(findTool(tools, name)).not.toBeNull();
+    }
+  });
+});
+
+describe("findTool", () => {
+  test("returns null for an unknown name", () => {
+    const tools = buildToolRegistry();
+    expect(findTool(tools, "doesNotExist")).toBeNull();
+  });
+});
+
+describe("tool input validation", () => {
+  test("bash rejects empty input", async () => {
+    const tools = buildToolRegistry();
+    const bash = findTool(tools, "bash")!;
+    const r = await bash.invoke({});
+    expect(r.succeeded).toBe(false);
+    expect(r.error).toContain("bad_arguments");
   });
 
-    test("returns null for unhandled transcripts", () => {
-        expect(tryMatch("Compose an email about Friday's incident")).toBeNull();
-        expect(tryMatch("What time is it in Tokyo")).toBeNull();
-        expect(tryMatch("Summarize my screen")).toBeNull();
-    });
+  test("openApp rejects missing name", async () => {
+    const tools = buildToolRegistry();
+    const openApp = findTool(tools, "openApp")!;
+    const r = await openApp.invoke({});
+    expect(r.succeeded).toBe(false);
+    expect(r.error).toContain("bad_arguments");
+  });
 
-    test("music claims transport commands", () => {
-        expect(tryMatch("Play music")?.id).toBe("music");
-        expect(tryMatch("Pause")?.id).toBe("music");
-        expect(tryMatch("Next song")?.id).toBe("music");
-    });
+  test("search rejects unknown service", async () => {
+    const tools = buildToolRegistry();
+    const search = findTool(tools, "search")!;
+    const r = await search.invoke({ service: "askJeeves", query: "x" });
+    expect(r.succeeded).toBe(false);
+    expect(r.error).toContain("bad_arguments");
+  });
 
-    test("search claims '<verb> <service> for <query>'", () => {
-        expect(tryMatch("Search Google for the weather")?.id).toBe("search");
-        expect(tryMatch("Search YouTube for tutorials")?.id).toBe("search");
-        expect(tryMatch("Google hark voice control")?.id).toBe("search");
-    });
-
-    test("search yields to chromeProfile when 'profile' is mentioned", () => {
-        // Search dispatcher explicitly declines when "profile" appears so the
-        // more specific chromeProfile (priority 10) gets a fair shot. In this
-        // case neither claims it — chromeProfile's regex needs a URL-shaped
-        // target — so the transcript falls through to LLM. The assertion is
-        // that search DOESN'T greedily eat it.
-        const matched = tryMatch("Search Google for X in my work profile");
-        expect(matched?.id).not.toBe("search");
-    });
+  test("musicControl rejects unknown command", async () => {
+    const tools = buildToolRegistry();
+    const music = findTool(tools, "musicControl")!;
+    const r = await music.invoke({ command: "fastForward" });
+    expect(r.succeeded).toBe(false);
+    expect(r.error).toContain("bad_arguments");
+  });
 });

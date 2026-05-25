@@ -1,17 +1,27 @@
 import { renderHistoryPreamble } from "../conversation.ts";
-import { runBash } from "../runBash.ts";
+import {
+  buildToolRegistry,
+  findTool,
+  type ToolEntry,
+} from "../dispatch/registry.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import type { AgentClient, AgentExecuteOpts, AgentRunResult } from "./types.ts";
-import { BASH_TOOL, type BashToolInput } from "./tools.ts";
 import { runToolLoop, type LlmRunOpts } from "./toolLoop.ts";
 
 /**
  * AgentClient backed by the Anthropic Messages API directly. Used when
  * the user has supplied an `ANTHROPIC_API_KEY` — bypasses the local
  * `claude` binary entirely so the user's `~/.claude/settings.json`
- * permission rules can't silently deny our Bash tool calls. Also
- * faster: Haiku 4.5 with prompt caching typically returns in under
- * a second for a single-tool voice command.
+ * permission rules can't silently deny our tool calls. Also faster:
+ * Haiku 4.5 with prompt caching typically returns in under a second
+ * for a single-tool voice command.
+ *
+ * Tool routing: we pass the full structured tool registry (openApp,
+ * openUrl, search, …, plus the `bash` escape hatch) to the model.
+ * The model is the router — picks `openApp` for "open Linear",
+ * `openUrl` for "open github.com", and falls through to `bash` for
+ * anything custom. No more regex pre-routing eating commands before
+ * the LLM sees them.
  */
 
 export interface MessagesClientOpts {
@@ -21,6 +31,8 @@ export interface MessagesClientOpts {
   fetchImpl?: typeof fetch;
   /** Test seam for the retry wrapper. */
   retrySleep?: (ms: number) => Promise<void>;
+  /** Test seam — inject an alternate registry (defaults to buildToolRegistry()). */
+  toolRegistry?: ToolEntry[];
 }
 
 const DEFAULT_MODEL = "claude-haiku-4-5";
@@ -34,28 +46,41 @@ export class MessagesClient implements AgentClient {
     transcript: string,
     runOpts: AgentExecuteOpts = {}
   ): Promise<AgentRunResult> {
-    const systemPrompt = await buildSystemPrompt();
+    const registry = this.opts.toolRegistry ?? buildToolRegistry();
+    const systemPrompt = await buildSystemPrompt(registry);
     const preamble = renderHistoryPreamble(runOpts.recentTurns ?? []);
+    const toolDefinitions = registry.map((t) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.inputSchema,
+    }));
+
+    const bashCommands: string[] = [];
+
     const toolOpts: LlmRunOpts = {
       apiKey: this.opts.apiKey,
       model: this.opts.model ?? DEFAULT_MODEL,
       systemPrompt,
       userPrompt: `${preamble}Voice command: ${transcript}`,
-      tools: [BASH_TOOL],
+      tools: toolDefinitions,
       onToolUse: async (block) => {
-        const input = block.input as Partial<BashToolInput>;
-        if (typeof input.command !== "string" || input.command.length === 0) {
+        const tool = findTool(registry, block.name);
+        if (tool === null) {
           return {
-            output: "Error: missing or empty `command` field",
+            output: `Error: unknown tool "${block.name}"`,
             isError: true,
-            rendered: "<invalid>",
+            rendered: `<unknown:${block.name}>`,
           };
         }
-        const r = await runBash(input.command);
+        const result = await tool.invoke(block.input);
+        // Collect every bash command run by every tool — surfaced
+        // upstairs for the "did anything actually run?" verification
+        // and for the support-bundle telemetry.
+        bashCommands.push(...result.bashCommands);
         return {
-          output: formatBashResult(r),
-          isError: r.exitCode !== 0 || r.timedOut,
-          rendered: input.command,
+          output: formatToolResult(result),
+          isError: !result.succeeded,
+          rendered: result.bashCommands.join(" && ") || tool.name,
         };
       },
       ...(this.opts.fetchImpl ? { fetchImpl: this.opts.fetchImpl } : {}),
@@ -68,7 +93,7 @@ export class MessagesClient implements AgentClient {
       summary: result.summary,
       succeeded: result.succeeded,
       ...(result.errorCode ? { errorCode: result.errorCode } : {}),
-      bashCommands: result.bashCommands,
+      bashCommands,
       llmTurns: result.llmTurns,
       usage: {
         inputTokens: result.usage.inputTokens,
@@ -81,21 +106,15 @@ export class MessagesClient implements AgentClient {
 }
 
 /**
- * Format a bash result for inclusion in a `tool_result` block. We
- * concatenate stdout + stderr with a short header so the model sees
- * everything that mattered without us tokenizing it into structured
- * sub-fields the API doesn't natively understand.
+ * Render a tool result as the body of a `tool_result` content block.
+ * Includes the human summary + any stderr so the model can recover
+ * from failures by trying a different tool.
  */
-function formatBashResult(r: {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  timedOut: boolean;
+function formatToolResult(r: {
+  summary: string;
+  succeeded: boolean;
+  error?: string | undefined;
 }): string {
-  const parts: string[] = [];
-  if (r.timedOut) parts.push("[timed out]");
-  parts.push(`exit ${r.exitCode}`);
-  if (r.stdout.trim()) parts.push(`stdout:\n${r.stdout.trim()}`);
-  if (r.stderr.trim()) parts.push(`stderr:\n${r.stderr.trim()}`);
-  return parts.join("\n");
+  if (r.succeeded) return r.summary;
+  return r.error ? `${r.summary}\nerror: ${r.error}` : r.summary;
 }

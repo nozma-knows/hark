@@ -181,11 +181,12 @@ describe("MessagesClient", () => {
 
     const client = new MessagesClient({ apiKey: "k", fetchImpl });
     const r = await client.executeCommand("anything");
-    // The malformed input still counts as a tool_use attempt — the
-    // tool result reports the error to the model but doesn't count
-    // as a successful Bash invocation. Hence succeeded=true is
-    // appropriate here only because the second turn produced text.
-    expect(r.bashCommands).toEqual(["<invalid>"]);
+    // Malformed input means the tool's parseInput threw — no bash
+    // command actually ran, so bashCommands stays empty. The tool
+    // call DID happen (toolUseCount > 0), so the runToolLoop's
+    // no-tool-use guard is satisfied and succeeded falls out of
+    // the second turn's text response.
+    expect(r.bashCommands).toEqual([]);
     expect(r.succeeded).toBe(true);
   });
 });

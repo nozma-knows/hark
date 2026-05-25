@@ -1,43 +1,48 @@
+import { z } from "zod";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runArgv } from "../runBash.ts";
-import type { Dispatcher, ExecutionResult } from "./types.ts";
+import type { ExecutionResult, Tool } from "./types.ts";
 
 /**
- * "Take a screenshot" / "Screenshot" / "Capture the screen" — the
- * single most common voice command on a Mac after "open X". Uses
- * macOS's built-in `screencapture -i` (interactive) so the user
- * picks the area; the file lands on Desktop with a timestamped name.
- *
- * Priority 40 (broad pattern; runs after the more-specific ones).
+ * Take a screenshot using macOS's built-in `screencapture`. Default
+ * mode is "interactive" — the user picks the area with the standard
+ * macOS crosshair, and the file lands on the Desktop with a
+ * timestamped name. `fullscreen` captures the whole screen with no UI.
  */
 
-interface ScreencaptureAction {
-  /** Marker — no fields needed today, but typed for future "fullscreen" etc. */
-  readonly kind: "interactive";
-}
+const InputShape = {
+  mode: z.enum(["interactive", "fullscreen"]).optional(),
+};
+const Input = z.object(InputShape);
+type Input = z.infer<typeof Input>;
 
-const PATTERNS: ReadonlyArray<RegExp> = [
-  /^take (?:a )?screenshot$/,
-  /^screenshot$/,
-  /^capture (?:the )?screen$/,
-  /^grab (?:a )?screenshot$/,
-];
+export const screenshot: Tool<Input> = {
+  name: "screenshot",
+  description:
+    "Take a screenshot. Default mode is 'interactive' (user picks the area via the standard macOS crosshair). Pass mode='fullscreen' to grab the entire screen with no UI. The file is saved to the Desktop with a timestamped name.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      mode: {
+        type: "string",
+        enum: ["interactive", "fullscreen"],
+        description:
+          "interactive (default) lets the user pick a region; fullscreen captures everything.",
+      },
+    },
+    required: [],
+  },
+  zodShape: InputShape,
 
-export const screencapture: Dispatcher<ScreencaptureAction> = {
-  id: "screencapture",
-  priority: 40,
-
-  match(transcript) {
-    for (const p of PATTERNS) {
-      if (p.test(transcript)) return { kind: "interactive" };
-    }
-    return null;
+  parseInput(raw) {
+    return Input.parse(raw ?? {});
   },
 
-  async execute(): Promise<ExecutionResult> {
+  async execute({ mode }): Promise<ExecutionResult> {
     const path = join(homedir(), "Desktop", `screenshot-${timestamp()}.png`);
-    const result = await runArgv(["screencapture", "-i", path]);
+    const args = mode === "fullscreen" ? ["screencapture", path] : ["screencapture", "-i", path];
+    const result = await runArgv(args);
     if (result.exitCode === 0) {
       return {
         summary: `Screenshot saved to ${path}`,

@@ -28,6 +28,13 @@ struct OnboardingPermissionStep: View {
     /// to System Settings (depending on `hasRequested`).
     let onPrimaryAction: () -> Void
 
+    /// Invoked when the user clicks the "I've already granted this"
+    /// override. Used to escape the trap where macOS shows the toggle
+    /// as ON in Settings but `AXIsProcessTrusted()` returns false (a
+    /// common post-update TCC drift). Nil for the microphone step,
+    /// where this drift doesn't happen.
+    let onAcknowledgeGranted: (() -> Void)?
+
     var body: some View {
         VStack(spacing: 16) {
             statusBlock
@@ -38,6 +45,16 @@ struct OnboardingPermissionStep: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 8)
+            // Surface the "I've granted it" override only after the
+            // user has clicked the primary action at least once — no
+            // point offering an escape hatch before they've tried the
+            // normal path.
+            if hasRequested, status == .incomplete, let onAcknowledgeGranted {
+                Button("I've already granted this — continue anyway", action: onAcknowledgeGranted)
+                    .buttonStyle(.borderless)
+                    .font(.footnote)
+                    .foregroundStyle(.tint)
+            }
         }
     }
 

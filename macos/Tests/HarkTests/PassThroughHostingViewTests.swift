@@ -55,4 +55,44 @@ final class PassThroughHostingViewTests: XCTestCase {
         let outsideOutset = CGPoint(x: rect.maxX + outset + 1, y: rect.midY)
         XCTAssertNil(host.hitTest(outsideOutset))
     }
+
+    /// Regression test for the coord-system mismatch that broke pill
+    /// buttons + drag in the wild: `hitTest(_:)` receives the point in
+    /// the SUPERVIEW's coords (Y-up bottom-left for a borderless panel's
+    /// frame view), but `visiblePillRect` lives in the flipped local
+    /// bounds (Y-down top-left, matching SwiftUI). Without conversion,
+    /// a click on the visually-bottom pill arrives with small Y and the
+    /// rect reports large Y — every click is silently dropped.
+    ///
+    /// Reproduce the production hierarchy: borderless panel with the
+    /// hosting view as contentView, then call hitTest with a point in
+    /// the panel's (un-flipped) coords that should land inside a rect
+    /// expressed in the host's (flipped) local coords.
+    func testHitTestConvertsSuperviewCoordsToLocal() {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 680, height: 72),
+            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let host = PassThroughHostingView(rootView: EmptyView())
+        panel.contentView = host
+        // Pill rendered at the bottom of the panel — in flipped local
+        // coords that's a large Y (near host.bounds.maxY).
+        let rect = CGRect(x: 300, y: 42, width: 80, height: 24)
+        host.visiblePillRect = rect
+
+        // A click at the bottom of the panel, in the frame view's Y-up
+        // coords (the coord system hitTest receives points in). Y = 12
+        // corresponds to the vertical center of the pill once flipped.
+        let clickAtBottomInSuperviewCoords = NSPoint(x: 340, y: 12)
+        XCTAssertNotNil(host.hitTest(clickAtBottomInSuperviewCoords))
+
+        // A click at the TOP of the panel (well above the pill) must
+        // still be rejected — in Y-up coords that's a large Y, which
+        // corresponds to a small Y in flipped local coords (above the
+        // rect). The bug would have inverted this.
+        let clickAtTopInSuperviewCoords = NSPoint(x: 340, y: 68)
+        XCTAssertNil(host.hitTest(clickAtTopInSuperviewCoords))
+    }
 }

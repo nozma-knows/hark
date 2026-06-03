@@ -23,6 +23,19 @@ struct OnboardingView: View {
                 }
                 .padding(.horizontal, 24)
 
+                // Escape hatch for the "I already approved this but it still
+                // says Required" trap. macOS caches some grants (notably
+                // Input Monitoring) for the life of the process, so a
+                // permission enabled in System Settings — or carried over
+                // from a previous version — can't be detected until Hark is
+                // relaunched. Shown only while an OS permission is still
+                // outstanding.
+                if !permissions.allGranted {
+                    relaunchHint
+                        .padding(.horizontal, 24)
+                        .padding(.top, 12)
+                }
+
                 // Test-recording step only unlocks once the OS perms +
                 // (recommended) Claude auth are squared away. The user
                 // has nothing useful to record otherwise.
@@ -129,6 +142,38 @@ struct OnboardingView: View {
             // tickets until they wire up auth.
             .disabled(!permissions.allGranted)
         }
+    }
+
+    private var relaunchHint: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "arrow.clockwise.circle")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            Text("Already approved a permission but it still shows as required? "
+                + "macOS only re-reads some grants on launch — relaunch Hark to pick them up.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 8)
+
+            Button("Relaunch") {
+                permissions.relaunch()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .fixedSize()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(.background.secondary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(.separator, lineWidth: 0.5)
+        )
     }
 
     // MARK: - Mic card state mapping

@@ -185,4 +185,33 @@ final class PermissionsManager {
         }
         NSWorkspace.shared.open(url)
     }
+
+    /// Relaunch Hark in a fresh process.
+    ///
+    /// macOS caches some privacy decisions for the lifetime of a process —
+    /// most notably Input Monitoring (`IOHIDCheckAccess`): once it has
+    /// reported "not granted", the same process keeps reading that stale
+    /// value even after the user flips the toggle in System Settings. The OS
+    /// itself signals this ("… will not be able to … until it is quit and
+    /// reopened"). A permission granted to a *previous* version lands in the
+    /// same trap — the running binary can't see it, so polling never catches
+    /// up and onboarding wedges with the toggle visibly enabled.
+    ///
+    /// Spawning a brand-new instance is the only reliable way to re-read the
+    /// permission state, so onboarding offers this as the escape hatch when a
+    /// grant refuses to register.
+    func relaunch() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        let bundleURL = Bundle.main.bundleURL
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, error in
+            Task { @MainActor in
+                if let error {
+                    Self.logger.error("relaunch failed: \(error.localizedDescription, privacy: .public)")
+                    return
+                }
+                NSApp.terminate(nil)
+            }
+        }
+    }
 }

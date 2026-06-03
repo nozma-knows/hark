@@ -20,6 +20,14 @@ struct OnboardingView: View {
                     accessibilityCard
                     inputMonitoringCard
                     claudeCard
+                    // Let users paste their own ANTHROPIC_API_KEY right here
+                    // instead of detouring to Settings after onboarding.
+                    // Hidden once a subscription is detected (already authed)
+                    // or when the key comes from the shell env (nothing to
+                    // do) — otherwise it's the fastest path to working auth.
+                    if showsApiKeyField {
+                        OnboardingApiKeyField(claudeAuth: claudeAuth)
+                    }
                 }
                 .padding(.horizontal, 24)
 
@@ -195,6 +203,21 @@ struct OnboardingView: View {
     }
 
     // MARK: - Claude card state mapping
+
+    /// Show the inline API-key field unless the user is already set up via a
+    /// subscription, or the key is coming from the shell env (where there's
+    /// nothing to paste). A Keychain-backed key keeps the field visible so it
+    /// can render the saved/replace/clear affordances.
+    private var showsApiKeyField: Bool {
+        switch claudeAuth.method {
+        case .none:
+            true
+        case let .apiKey(source):
+            source == .keychain
+        case .subscription:
+            false
+        }
+    }
 
     private var claudeCardStatus: PermissionCard.Status {
         switch claudeAuth.method {

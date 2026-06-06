@@ -7,6 +7,7 @@
 @preconcurrency import AVFoundation
 import Foundation
 import Observation
+import OSLog
 
 /// Captures microphone audio via `AVAudioEngine`, downsamples to 16 kHz mono
 /// Float32 (Whisper's expected input), and exposes the running buffer + a
@@ -34,11 +35,19 @@ final class AudioRecorder {
     private(set) var duration: TimeInterval = 0
     private(set) var level: Float = 0
 
+    private static let logger = Logger(subsystem: "co.milbo.hark", category: "Audio")
     private static let targetSampleRate: Double = 16000
     static let maxDuration: TimeInterval = 60
     private static let maxSampleCount = Int(targetSampleRate * maxDuration)
 
-    private let engine = AVAudioEngine()
+    /// Recreated for every recording session (see `start()`). Held as a
+    /// `var` rather than a `let` because a single long-lived engine binds
+    /// its input node to the audio HAL exactly once — under whatever
+    /// microphone-permission and default-input-device state existed at the
+    /// first `start()` — and never re-binds. On a freshly onboarded machine
+    /// that first binding can land before mic access has fully propagated,
+    /// leaving the engine streaming silence for the rest of the app session.
+    private var engine = AVAudioEngine()
     private let targetFormat: AVAudioFormat
 
     /// 16 kHz mono Float32 samples captured so far this session.
@@ -48,6 +57,13 @@ final class AudioRecorder {
     private var samples: [Float] = []
     private var startTime: Date?
     private var durationTimer: Timer?
+
+    /// Loudest RMS level seen this session. Logged at stop so a "blank
+    /// recording" report can be triaged from the log file alone: a peak at
+    /// (or near) zero means the input stream was silent — the classic
+    /// symptom of the input node binding under denied/transitional mic
+    /// permission — versus a healthy peak that points downstream to Whisper.
+    private var peakLevel: Float = 0
 
     init() {
         guard
@@ -72,10 +88,24 @@ final class AudioRecorder {
         samples.removeAll(keepingCapacity: true)
         duration = 0
         level = 0
+        peakLevel = 0
 
+        // Build a fresh engine each session so the input node binds to the
+        // current default input device under the current microphone-permission
+        // state, instead of reusing a stale binding from a previous session
+        // (e.g. one captured during onboarding before mic access propagated).
+        engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
-        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+        let formatDesc = "\(inputFormat.sampleRate)Hz/\(inputFormat.channelCount)ch"
+        Self.logger.info("record start input: \(formatDesc, privacy: .public)")
+        FileLogger.shared.log(.info, category: "Audio", "record start input=\(formatDesc)")
+        guard
+            inputFormat.channelCount > 0, inputFormat.sampleRate > 0,
+            let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else
+        {
+            Self.logger.error("no usable audio input device (0 channels or no converter)")
+            FileLogger.shared.log(.error, category: "Audio", "no usable audio input device")
             throw RecorderError.converterUnavailable
         }
         let target = targetFormat
@@ -114,6 +144,19 @@ final class AudioRecorder {
         startTime = nil
 
         let finalSamples = samples
+        let peak = peakLevel
+        Self.logger.info(
+            "record stop: \(finalSamples.count, privacy: .public) samples, peak \(peak, privacy: .public)"
+        )
+        FileLogger.shared.log(
+            .info,
+            category: "Audio",
+            "record stop samples=\(finalSamples.count) peak=\(peak)"
+        )
+        if finalSamples.isEmpty || peak == 0 {
+            Self.logger.error("captured silence — input device produced no audio")
+            FileLogger.shared.log(.error, category: "Audio", "captured silence (no audio from input)")
+        }
         samples.removeAll(keepingCapacity: false)
         state = .idle
         level = 0
@@ -126,6 +169,7 @@ final class AudioRecorder {
             samples.removeFirst(samples.count - Self.maxSampleCount)
         }
         self.level = level
+        peakLevel = max(peakLevel, level)
     }
 
     private func tickDuration() {

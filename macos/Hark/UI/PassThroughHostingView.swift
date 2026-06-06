@@ -40,4 +40,21 @@ final class PassThroughHostingView<Content: View>: NSHostingView<Content> {
         guard target.contains(point) else { return nil }
         return super.hitTest(point)
     }
+
+    /// Deliver the very first click straight to the pill's buttons.
+    ///
+    /// The pill lives in a non-activating `NSPanel` (see
+    /// `PanelWindowController`), so Hark is essentially never the active
+    /// app or key window — the user is always clicking in from some other
+    /// foreground app. By default AppKit treats a click into an inactive
+    /// window as an *activation* click: it makes the window key and
+    /// swallows the event instead of routing it to the view underneath.
+    /// That's the "hover works but the record / settings buttons don't
+    /// respond" bug — hover uses tracking areas (no key-window
+    /// requirement) while clicks were being eaten by the activation step.
+    ///
+    /// Returning `true` here delivers the mouseDown directly to the
+    /// SwiftUI content on the first click, without stealing focus from the
+    /// user's current app — preserving the non-activating behavior.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

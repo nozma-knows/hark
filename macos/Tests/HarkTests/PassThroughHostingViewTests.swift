@@ -42,6 +42,15 @@ final class PassThroughHostingViewTests: XCTestCase {
         XCTAssertNotNil(host.hitTest(CGPoint(x: rect.midX, y: rect.midY)))
     }
 
+    func testAcceptsFirstMouse() {
+        // The pill panel is non-activating, so clicks always arrive while
+        // Hark is inactive. Without this, AppKit eats the first click to
+        // activate the window and the pill's buttons never fire (only
+        // hover, which doesn't need a key window, appears to work).
+        let host = makeView()
+        XCTAssertTrue(host.acceptsFirstMouse(for: nil))
+    }
+
     func testHitTestOutsetExtendsHittableArea() {
         let host = makeView()
         let rect = CGRect(x: 80, y: 20, width: 40, height: 24)

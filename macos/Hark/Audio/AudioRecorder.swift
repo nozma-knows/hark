@@ -100,9 +100,10 @@ final class AudioRecorder {
         let formatDesc = "\(inputFormat.sampleRate)Hz/\(inputFormat.channelCount)ch"
         Self.logger.info("record start input: \(formatDesc, privacy: .public)")
         FileLogger.shared.log(.info, category: "Audio", "record start input=\(formatDesc)")
-        guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0,
-              let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
-        else {
+        guard
+            inputFormat.channelCount > 0, inputFormat.sampleRate > 0,
+            let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else
+        {
             Self.logger.error("no usable audio input device (0 channels or no converter)")
             FileLogger.shared.log(.error, category: "Audio", "no usable audio input device")
             throw RecorderError.converterUnavailable
@@ -143,15 +144,16 @@ final class AudioRecorder {
         startTime = nil
 
         let finalSamples = samples
+        let peak = peakLevel
         Self.logger.info(
-            "record stop: \(finalSamples.count, privacy: .public) samples, peak \(self.peakLevel, privacy: .public)"
+            "record stop: \(finalSamples.count, privacy: .public) samples, peak \(peak, privacy: .public)"
         )
         FileLogger.shared.log(
             .info,
             category: "Audio",
-            "record stop samples=\(finalSamples.count) peak=\(peakLevel)"
+            "record stop samples=\(finalSamples.count) peak=\(peak)"
         )
-        if finalSamples.isEmpty || peakLevel == 0 {
+        if finalSamples.isEmpty || peak == 0 {
             Self.logger.error("captured silence — input device produced no audio")
             FileLogger.shared.log(.error, category: "Audio", "captured silence (no audio from input)")
         }

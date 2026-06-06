@@ -56,5 +56,7 @@ final class PassThroughHostingView<Content: View>: NSHostingView<Content> {
     /// Returning `true` here delivers the mouseDown directly to the
     /// SwiftUI content on the first click, without stealing focus from the
     /// user's current app — preserving the non-activating behavior.
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+        true
+    }
 }

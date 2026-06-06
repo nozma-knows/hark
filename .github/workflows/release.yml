@@ -87,7 +87,7 @@ jobs:
           API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: |
           mkdir -p ~/.appstoreconnect/private_keys
-          echo "$API_KEY_BASE64" | base64 --decode > "~/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
+          echo "$API_KEY_BASE64" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8"
           xcrun notarytool store-credentials hark-notary-api \
             --key "$HOME/.appstoreconnect/private_keys/AuthKey_${API_KEY_ID}.p8" \
             --key-id "$API_KEY_ID" \
@@ -99,11 +99,13 @@ jobs:
         run: |
           # generate_appcast picks up the private key from the system
           # keychain item named `ed25519` under the `sparkle` service.
-          # Pipe the secret into stdin via `-w -` instead of substituting
-          # it into argv; the previous xargs form broke as soon as the
-          # secret contained whitespace or shell metacharacters.
-          printf '%s' "$SPARKLE_KEY" | security add-generic-password \
-            -a ed25519 -s "https://sparkle-project.org" -w - \
+          # `security add-generic-password` has no stdin form — `-w -` stores
+          # the literal string "-", not the piped key — so pass the secret as
+          # the quoted `-w` argument. Quoting handles any whitespace or shell
+          # metacharacters; the EdDSA key from `generate_keys` is single-line
+          # base64, so no further escaping is needed.
+          security add-generic-password \
+            -a ed25519 -s "https://sparkle-project.org" -w "$SPARKLE_KEY" \
             -U build.keychain
 
       - name: Configure R2

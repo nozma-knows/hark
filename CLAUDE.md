@@ -211,6 +211,26 @@ open build/DerivedData/Build/Products/Debug/Hark.app
 pkill -9 -f 'Hark.app/Contents/MacOS/Hark'
 ```
 
+### Permissions while testing (mic / Accessibility / Input Monitoring)
+
+`setup-dev-signing.sh` is **not optional** — it creates the stable `Hark Dev`
+cert so TCC remembers your grants across rebuilds. Without it, builds fall back
+to ad-hoc signing (new cdhash every build), so macOS treats each rebuild as a
+new app and the permission you granted last time reads as denied — which leaves
+you stuck in onboarding with the wizard unable to auto-advance.
+
+The Debug build uses the bundle id `co.milbo.hark.dev` (Release uses
+`co.milbo.hark`), so a locally-built Hark and an installed Release Hark are
+**separate** TCC entries and never clobber each other's grants. Each is granted
+once, independently, in System Settings → Privacy & Security.
+
+If a grant gets wedged (Settings shows Hark on, but the app still acts
+unpermitted — common right after a signing-identity change), reset and re-prompt:
+
+```bash
+./scripts/reset-tcc.sh            # clears dev + release grants, then re-prompt on next launch
+```
+
 ## Conventions
 
 - One file per type. File header doc-comment explains the type's role.

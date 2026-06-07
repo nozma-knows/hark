@@ -197,9 +197,19 @@ targets:
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
       configs:
         Debug:
+          # Distinct bundle id for local builds so dev and an installed
+          # Release build are SEPARATE entries in macOS TCC. Same id across
+          # both configs (different signatures) collides: granting the dev
+          # build flips Settings on, but the Release build — or the next
+          # rebuild — still reads untrusted, which strands users in
+          # onboarding with no way to advance. See docs/onboarding-audit.md.
+          PRODUCT_BUNDLE_IDENTIFIER: co.milbo.hark.dev
           # "Hark Dev" self-signed cert (scripts/setup-dev-signing.sh). Stable
           # across rebuilds so macOS TCC remembers Accessibility / Microphone
-          # grants. CI overrides to ad-hoc via xcodebuild args.
+          # grants. WITHOUT this cert, builds fall back to ad-hoc signing,
+          # whose cdhash changes every build — TCC then re-prompts (or silently
+          # denies) on every rebuild. Run setup-dev-signing.sh once per machine.
+          # CI overrides to ad-hoc via xcodebuild args.
           ENABLE_HARDENED_RUNTIME: NO
           CODE_SIGN_IDENTITY: "Hark Dev"
           DEVELOPMENT_TEAM: ""

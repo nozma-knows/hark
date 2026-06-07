@@ -75,6 +75,16 @@ These are good and worth preserving:
   toggle, the wizard moves forward on its own. It only advances if the *current*
   step is the one that flipped, so a later grant doesn't yank the user ahead
   (`OnboardingFlowModel.swift:164-167`).
+  **Important caveat (see §3.0 + §5):** the navigation *logic* is correct, but
+  it can only fire when the OS actually reports the grant **live to the running
+  process**. Two things break that — (a) TCC drift, where the binary's signature
+  no longer matches what was granted, so the probe keeps returning "denied" no
+  matter how long we poll; and (b) `AXIsProcessTrusted()` caching, which on some
+  macOS versions doesn't flip within the process that was launched untrusted.
+  When either happens the wizard *cannot* auto-advance, because as far as the
+  app is concerned the permission genuinely isn't granted. This is the
+  #1 cause of "I granted it but I'm stuck" reports, and it is especially common
+  in local dev (see §5.1).
 - **Honest permission copy + single action.** After #25, the AX / IM steps just
   open the right Settings pane (one predictable action) instead of firing a
   system dialog *and* a redirect (`OnboardingView.swift:266-289`).
@@ -146,6 +156,30 @@ The practical consequences of "progress == the three OS grants":
 ## 3. What's weak / what costs us finishers
 
 Ordered by estimated impact on completion rate.
+
+### 3.0 "Granted but stuck" — the permission reads as denied to the process (HIGHEST)
+This is the failure that surfaced during local testing of this very audit, and
+it's worth pulling to the top because it makes the otherwise-correct
+auto-advance look broken. The wizard polls and the logic is sound, but the
+underlying probe (`AXIsProcessTrusted()` / `IOHIDCheckAccess()` /
+`AVCaptureDevice.authorizationStatus`) keeps returning "not granted" for the
+running binary, so there's nothing to advance *to*. Two distinct causes:
+
+1. **TCC binds a grant to (bundle id + code signature).** If the running binary
+   was signed differently from the one that was granted — a Release build vs a
+   dev build sharing `co.milbo.hark`, or an **ad-hoc** dev build whose cdhash
+   changes on every rebuild — Settings shows Hark toggled on while the process
+   reads denied. (Confirmed locally: the stable `Hark Dev` cert was missing, so
+   dev builds were ad-hoc and lost their grant on every rebuild.)
+2. **`AXIsProcessTrusted()` caches per process.** On some macOS versions the
+   trust value is fixed at launch; flipping the toggle won't update it until the
+   process restarts. This is why `AppRelauncher.relaunch()` exists — but the
+   restart link only appears *after* the user has clicked through once
+   (`OnboardingPermissionStep.swift:68`), and that "have they clicked" flag is
+   view-local `@State` that resets every reopen (`OnboardingView.swift:25-26`).
+
+This PR addresses cause (1) for the dev/test workflow directly — see §5.
+Cause (2) and the recovery-affordance reset are follow-ups (§4 items 7 + new).
 
 ### 3.1 The two System Settings round-trips are the drop-off cliff (HIGH)
 Steps 3 and 4 eject the user into System Settings to hunt for "Hark" in a long
@@ -236,7 +270,18 @@ the audit). Rough impact/effort in brackets.
 ## 5. Local + production testing without permissions overlapping
 
 This is the second explicit question in the ticket, and it has a concrete root
-cause.
+cause. **This PR implements the fix below** (project.yml + a reset script);
+the rest of this section explains why.
+
+### 5.0 The other half: unstable dev signing (fix: run the existing script)
+Independent of the bundle-id collision, a dev build only keeps its TCC grant
+across rebuilds if it's signed with a **stable** identity. The repo already has
+`scripts/setup-dev-signing.sh` to create the `Hark Dev` cert for exactly this
+reason — but it has to actually be run on each dev machine. If it hasn't been,
+builds fall back to ad-hoc signing, the cdhash changes every build, and TCC
+re-denies on every rebuild (this was the case observed while auditing). There's
+no code fix here — it's a setup step, now called out as non-optional in
+`CLAUDE.md` → Dev workflow.
 
 ### 5.1 Why permissions collide today
 
@@ -262,21 +307,36 @@ bound to the other binary's signature. This is the documented
 `tccutil reset Accessibility co.milbo.hark` / `tccutil reset All co.milbo.hark`),
 and it's the same drift the in-app "Restart Hark to apply" recovery papers over.
 
-### 5.2 The fix: give the dev build its own identity
+### 5.2 The fix (implemented in this PR): give the dev build its own identity
 
 Make local and production **two distinct apps to TCC** so their grants never
-touch each other. Lowest-risk, highest-leverage option:
+touch each other. Implemented as:
 
-- Set a Debug-only bundle suffix in `project.yml`, e.g.
-  `PRODUCT_BUNDLE_IDENTIFIER: co.milbo.hark.dev` under the Debug config (leave
-  Release as `co.milbo.hark`). Optionally `PRODUCT_NAME: "Hark Dev"` so the two
-  are visually distinct in the Settings permission lists.
+- Debug config now sets `PRODUCT_BUNDLE_IDENTIFIER: co.milbo.hark.dev`
+  (`macos/project.yml`, Debug config); Release stays `co.milbo.hark`.
 - Result: granting permissions to `co.milbo.hark.dev` and to `co.milbo.hark` are
   independent TCC rows. You can have the dev build and the released build both
   permitted at once; iterating on the dev build never disturbs the production
   grant, and vice-versa.
 
-Things to verify when implementing (call-outs, not blockers):
+`PRODUCT_NAME` is deliberately left as `Hark` so the existing build paths,
+`open …/Debug/Hark.app`, and the `pkill` relaunch pattern keep working. Both
+apps therefore show as "Hark" in the Settings permission lists but are distinct
+TCC entries — toggle each once.
+
+Things verified while implementing (no runtime coupling to the bundle id):
+
+- The login-Keychain service is the literal constant `"co.milbo.hark"`
+  (`Keychain.swift:16`), **not** the bundle id — so a saved API key stays
+  readable under either build.
+- The only self-`bundleIdentifier` read is for the *frontmost* app
+  (`PolishPane.swift:75`), not Hark itself.
+- Entitlements declare no `keychain-access-group` / app-group, so nothing is
+  scoped to the bundle id (`Signing/Hark.entitlements`).
+- No test asserts the app bundle id (the `co.milbo.hark.*` hits in tests are
+  UserDefaults keys).
+
+Other call-outs (left intentionally unchanged):
 
 - The log subsystem string `"co.milbo.hark"` is hard-coded in many `Logger(...)`
   calls and is **independent** of the bundle ID — leave it as-is; diagnostics
@@ -288,28 +348,28 @@ Things to verify when implementing (call-outs, not blockers):
   `project.yml:226`) so tests are unaffected.
 - Sparkle/appcast and notarization are Release-only and keep the production ID.
 
-### 5.3 Standardize the reset workflow (until 5.2 lands, and as a fallback)
+### 5.3 The reset helper (added in this PR)
 
-Keep a one-liner documented for clearing a wedged state during testing:
+`scripts/reset-tcc.sh` clears a wedged grant state during testing. By default it
+resets both the dev and release bundle ids across all three services; pass a
+bundle id to scope it:
 
 ```
-tccutil reset All co.milbo.hark          # nuke every Hark grant
-# or scoped:
-tccutil reset Accessibility co.milbo.hark
-tccutil reset ListenEvent  co.milbo.hark # Input Monitoring
-tccutil reset Microphone   co.milbo.hark
+./scripts/reset-tcc.sh                  # reset dev + release, then re-prompt on next launch
+./scripts/reset-tcc.sh co.milbo.hark.dev   # reset just the dev build
 ```
 
-A small `scripts/reset-tcc.sh` wrapper would make this discoverable. With 5.2 in
-place, you'd rarely need it, and when you do you can reset the dev identity in
-isolation (`…hark.dev`) without touching production grants.
+With §5.2 in place you'll rarely need it, and when you do you can reset the dev
+identity in isolation without touching production grants.
 
 ### 5.4 Net recommendation
 
-1. Split the Debug bundle ID (`co.milbo.hark.dev`) + name — makes local and
-   production permanently non-overlapping in TCC. *(primary fix)*
-2. Add `scripts/reset-tcc.sh` for the occasional wedge. *(safety net)*
-3. Keep the in-app "Restart Hark to apply" recovery — it's the right fix for the
+1. **Run `scripts/setup-dev-signing.sh`** so dev builds are stably signed —
+   without it, grants die on every rebuild regardless of bundle id. *(setup)*
+2. Debug bundle id is now `co.milbo.hark.dev` — local and production are
+   permanently non-overlapping in TCC. *(implemented)*
+3. `scripts/reset-tcc.sh` for the occasional wedge. *(implemented)*
+4. Keep the in-app "Restart Hark to apply" recovery — it's the right fix for the
    *end-user* post-update drift, which is a different scenario from the
    dev/prod collision.
 

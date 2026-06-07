@@ -29,6 +29,8 @@ struct HarkApp: App {
                 recorder: delegate.recorder,
                 transcriber: delegate.transcriber,
                 updater: delegate.updater,
+                permissions: delegate.permissions,
+                claudeAuth: delegate.claudeAuth,
                 onShowWelcome: { delegate.onboardingController.show() },
                 onShowHistory: { delegate.historyWindowController.show() }
             )
@@ -83,6 +85,8 @@ private struct HarkMenu: View {
     @Bindable var recorder: AudioRecorder
     @Bindable var transcriber: Transcriber
     @Bindable var updater: UpdateManager
+    @Bindable var permissions: PermissionsManager
+    @Bindable var claudeAuth: ClaudeAuth
     let onShowWelcome: () -> Void
     let onShowHistory: () -> Void
 
@@ -95,8 +99,26 @@ private struct HarkMenu: View {
 
         Divider()
 
-        Button("Welcome…") {
+        // Discoverable re-entry into onboarding. While a required
+        // permission is still missing the wizard is mid-flow — label it
+        // "Finish setup…" so a user who closed the window has an obvious
+        // way back instead of a silent dead end.
+        Button(permissions.allGranted ? "Welcome…" : "Finish setup…") {
             onShowWelcome()
+        }
+
+        // Post-skip nudge: once setup is otherwise done but Claude was
+        // skipped, Hark only produces raw transcripts. Surface a way
+        // back to connect it — only after onboarding finished, so this
+        // doesn't pile on top of the live in-wizard Claude step.
+        if
+            OnboardingProgress.hasCompleted,
+            permissions.allGranted,
+            !claudeAuth.method.isResolved
+        {
+            Button("Connect Claude…") {
+                onShowWelcome()
+            }
         }
 
         Button("History…") {

@@ -158,7 +158,7 @@ Tag push triggers `.github/workflows/release.yml` which runs the same script wit
 
 ## Tests
 
-Run with `xcodebuild test`. **247 tests** across 26 test files, all passing in ~16s, zero `swiftlint --strict` violations. Release builds clean with `SWIFT_TREAT_WARNINGS_AS_ERRORS: YES`.
+Run with `xcodebuild test`. **250 tests** across 26 test files, all passing in ~16s, zero `swiftlint --strict` violations. Release builds clean with `SWIFT_TREAT_WARNINGS_AS_ERRORS: YES`.
 
 Coverage map:
 
@@ -174,7 +174,7 @@ Coverage map:
 | `FileLoggerTests` | 14 | Init creates dir, log levels, ISO8601 timestamps, ordering preservation, concurrent writes don't tear, rotation at threshold, single-generation cap, Unicode bodies, empty bodies, 1000-line stress |
 | `HarkTests` | 1 | Bundle loads sanity |
 | `HotkeyManagerTests` | 6 | Modifier truth table + latch-upgrade priorities |
-| `OnboardingFlowModelTests` | 14 | Step wizard navigation: initial landing, skip-complete forward walk, back navigation, can-continue gating, skip-claude, reactive auto-advance |
+| `OnboardingFlowModelTests` | 20 | Step wizard navigation: initial landing, skip-complete forward walk, back navigation, can-continue gating, skip-claude, reactive auto-advance, per-step request tracking |
 | `PanelViewModelTests` | 15 | UI mode derivation priority order (10 base branches + 5 boundary cases) |
 | `PermissionsManagerTests` | 14 | `allGranted` aggregation, grant-callback firing, fast-poll lifecycle, settings-deep-link starts polling |
 | `RecordingOrchestratorTests` | 12 | Permission gating, hotkey start/stop pairing, pill toggle, manual cancel |

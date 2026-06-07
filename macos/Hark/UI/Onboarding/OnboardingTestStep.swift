@@ -52,18 +52,27 @@ struct OnboardingTestStep: View {
     @ViewBuilder private var recordButton: some View {
         switch phase {
         case .idle, .failed:
-            Button {
-                start()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "mic.fill")
-                    Text(phase == .failed ? "Try again" : "Start recording")
-                        .font(.headline)
+            // On a fresh install the WhisperKit model may still be
+            // downloading/loading (warmed in the background at launch).
+            // Gate the record button on readiness so the user's first
+            // taste of the marquee feature never reads as a generic
+            // "Transcription failed" — show honest progress instead.
+            if modelReady {
+                Button {
+                    start()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "mic.fill")
+                        Text(phase == .failed ? "Try again" : "Start recording")
+                            .font(.headline)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 10)
+                .buttonStyle(.borderedProminent)
+            } else {
+                modelPreparation
             }
-            .buttonStyle(.borderedProminent)
         case .recording:
             Button {
                 stop()
@@ -121,6 +130,48 @@ struct OnboardingTestStep: View {
         default:
             EmptyView()
         }
+    }
+
+    /// "Preparing the model" affordance shown in place of the record
+    /// button while WhisperKit isn't ready yet. A load failure gets a
+    /// plain warning (no spinner); a download/load in progress gets a
+    /// spinner with honest progress.
+    @ViewBuilder private var modelPreparation: some View {
+        if case .failed = transcriber.state {
+            Label(
+                "The on-device model failed to load. Check Settings → General → Log file.",
+                systemImage: "exclamationmark.triangle.fill"
+            )
+            .foregroundStyle(.orange)
+            .font(.callout)
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 24)
+        } else {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(preparationMessage)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Whether the on-device model is loaded and ready to transcribe.
+    /// `.transcribing` counts as ready — a transcribe mid-flight means
+    /// the model is already loaded.
+    private var modelReady: Bool {
+        switch transcriber.state {
+        case .ready, .transcribing: true
+        default: false
+        }
+    }
+
+    private var preparationMessage: String {
+        if case let .downloading(_, progress) = transcriber.state {
+            return "Downloading the on-device speech model… \(Int(progress * 100))%"
+        }
+        return "Preparing the on-device model — just a moment…"
     }
 
     // MARK: - Phase transitions

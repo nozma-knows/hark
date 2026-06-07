@@ -32,6 +32,7 @@ struct OnboardingClaudeStep: View {
                     detail: "Source: \(source.rawValue). Hark uses the Agent SDK path."
                 )
             case .none:
+                valueProposition
                 apiKeyEntry
                 Divider()
                 subscriptionFallback
@@ -43,6 +44,23 @@ struct OnboardingClaudeStep: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// Makes the cost of skipping concrete. Without Claude, Hark only
+    /// emits raw transcripts — no punctuation/casing polish, no voice
+    /// commands. Surfacing this before the "Skip for now" button turns a
+    /// silent downgrade into an informed choice.
+    private var valueProposition: some View {
+        VStack(spacing: 6) {
+            Text("Connect Claude to unlock the full experience")
+                .font(.callout.weight(.medium))
+            Text("Without it, Hark types raw transcripts only — no polish, no voice commands.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func resolvedBlock(title: String, detail: String) -> some View {

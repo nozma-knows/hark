@@ -51,6 +51,15 @@ final class OnboardingFlowModel {
     /// us add more optional steps without rewriting the navigation logic.
     private var skipped: Set<OnboardingStep> = []
 
+    /// Permission steps where the user has clicked the primary action
+    /// ("Open System Settings") at least once. Lives on the model — not
+    /// view-local `@State` — so the inline Settings guidance and the
+    /// "Restart Hark to apply" recovery link survive a window reopen. A
+    /// user stuck in post-update TCC drift who closes and reopens the
+    /// window should still see the recovery affordance without having to
+    /// re-trigger the Settings jump.
+    private var requested: Set<OnboardingStep> = []
+
     /// The step currently visible to the user. Updates trigger SwiftUI
     /// re-renders via `@Observable`.
     private(set) var step: OnboardingStep
@@ -107,6 +116,21 @@ final class OnboardingFlowModel {
     /// instead of hard-coding the step ID.
     func canSkip(_ step: OnboardingStep) -> Bool {
         step == .claudeAuth
+    }
+
+    /// Record that the user has clicked the primary action for a
+    /// permission step. Drives the inline Settings guidance + recovery
+    /// affordance, both of which only make sense after the user has been
+    /// sent to System Settings at least once.
+    func markRequested(_ step: OnboardingStep) {
+        requested.insert(step)
+    }
+
+    /// Has the user clicked the primary action for this step in this
+    /// session? Persists across window reopens because it lives on the
+    /// model rather than view-local `@State`.
+    func hasRequested(_ step: OnboardingStep) -> Bool {
+        requested.contains(step)
     }
 
     // MARK: - Navigation

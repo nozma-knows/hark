@@ -196,6 +196,37 @@ final class OnboardingFlowModelTests: XCTestCase {
         XCTAssertEqual(model.step, .microphone)
     }
 
+    // MARK: - Request tracking (survives window reopen)
+
+    func testHasRequestedDefaultsFalse() {
+        let probe = StatusProbe.allIncomplete()
+        let model = OnboardingFlowModel(dependencies: probe.dependencies)
+        XCTAssertFalse(model.hasRequested(.accessibility))
+        XCTAssertFalse(model.hasRequested(.inputMonitoring))
+    }
+
+    func testMarkRequestedIsTrackedPerStep() {
+        let probe = StatusProbe.allIncomplete()
+        let model = OnboardingFlowModel(dependencies: probe.dependencies)
+        model.markRequested(.accessibility)
+        XCTAssertTrue(
+            model.hasRequested(.accessibility),
+            "marking accessibility should be visible immediately"
+        )
+        XCTAssertFalse(
+            model.hasRequested(.inputMonitoring),
+            "marking one step must not bleed into another"
+        )
+    }
+
+    func testRequestTrackingIsIdempotent() {
+        let probe = StatusProbe.allIncomplete()
+        let model = OnboardingFlowModel(dependencies: probe.dependencies)
+        model.markRequested(.inputMonitoring)
+        model.markRequested(.inputMonitoring)
+        XCTAssertTrue(model.hasRequested(.inputMonitoring))
+    }
+
     // MARK: - Status
 
     func testTryItStatusIsAlwaysIncomplete() {

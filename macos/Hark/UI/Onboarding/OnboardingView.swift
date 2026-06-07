@@ -18,12 +18,6 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @State private var model: OnboardingFlowModel
-    /// Tracks per-permission "have we shown the system prompt yet."
-    /// Microphone status uses `.undetermined` for this; accessibility +
-    /// input monitoring don't expose that state, so we track locally.
-    /// Reset implicitly each time the window opens (this is `@State`).
-    @State private var accessibilityRequested = false
-    @State private var inputMonitoringRequested = false
 
     init(
         permissions: PermissionsManager,
@@ -65,8 +59,16 @@ struct OnboardingView: View {
         .onChange(of: permissions.inputMonitoringGranted) { _, _ in model.advanceIfCurrentStepCompleted() }
         .onChange(of: claudeAuth.method) { _, _ in model.advanceIfCurrentStepCompleted() }
         .onChange(of: model.isFlowComplete) { _, complete in
-            if complete { onComplete() }
+            if complete { finish() }
         }
+    }
+
+    /// Single exit point for the wizard. Records that the user reached
+    /// the end (so post-onboarding nudges can fire) and hands control
+    /// back to the window controller to close.
+    private func finish() {
+        OnboardingProgress.markCompleted()
+        onComplete()
     }
 
     // MARK: - Step rendering
@@ -155,9 +157,10 @@ struct OnboardingView: View {
                 "macOS only allows this toggle to be flipped in System Settings — apps can't grant "
                     + "themselves Accessibility. The wizard advances automatically once you toggle Hark on.",
                 status: status,
-                hasRequested: accessibilityRequested,
+                hasRequested: model.hasRequested(.accessibility),
                 primaryActionLabel: "Open System Settings",
                 onPrimaryAction: handleAccessibilityAction,
+                settingsSteps: Self.accessibilityGuidance,
                 onRestartToApply: { AppRelauncher.relaunch() }
             )
         }
@@ -183,9 +186,10 @@ struct OnboardingView: View {
                 "macOS only allows this toggle to be flipped in System Settings — apps can't grant "
                     + "themselves Input Monitoring. Toggle Hark on and the wizard advances automatically.",
                 status: status,
-                hasRequested: inputMonitoringRequested,
+                hasRequested: model.hasRequested(.inputMonitoring),
                 primaryActionLabel: "Open System Settings",
                 onPrimaryAction: handleInputMonitoringAction,
+                settingsSteps: Self.inputMonitoringGuidance,
                 onRestartToApply: { AppRelauncher.relaunch() }
             )
         }
@@ -220,13 +224,33 @@ struct OnboardingView: View {
             onBack: { model.back() },
             continueLabel: "Done",
             continueEnabled: true,
-            onContinue: { onComplete() },
+            onContinue: { finish() },
             skipLabel: "Skip",
-            onSkip: { onComplete() }
+            onSkip: { finish() }
         ) {
             OnboardingTestStep(recorder: recorder, transcriber: transcriber)
         }
     }
+
+    // MARK: - Settings guidance
+
+    /// Concrete step-by-step shown once the user has been sent to the
+    /// Accessibility pane. The System Settings round-trip is the single
+    /// biggest onboarding drop-off point — users land in a long list and
+    /// don't know what to do. Spelling out "Hark is already here, flip
+    /// the switch" removes the guesswork. Kept as plain text (no bundled
+    /// screenshot) so it stays correct as macOS reshuffles the pane.
+    private static let accessibilityGuidance = [
+        "Find Hark in the list on the right (it's already there).",
+        "Switch the toggle next to Hark on.",
+        "Come back here — the wizard moves on automatically."
+    ]
+
+    private static let inputMonitoringGuidance = [
+        "Find Hark in the Input Monitoring list (it's already there).",
+        "Switch the toggle next to Hark on.",
+        "Come back here — the wizard moves on automatically."
+    ]
 
     // MARK: - Step actions
 
@@ -274,7 +298,7 @@ struct OnboardingView: View {
         // at launch, which is what registers Hark in the Accessibility
         // list, so the toggle is already there waiting.
         permissions.openAccessibilitySettings()
-        accessibilityRequested = true
+        model.markRequested(.accessibility)
     }
 
     private func handleInputMonitoringAction() {
@@ -285,7 +309,7 @@ struct OnboardingView: View {
         // Hark in the Input Monitoring list); we just need to take the
         // user to the pane so they can toggle.
         permissions.openInputMonitoringSettings()
-        inputMonitoringRequested = true
+        model.markRequested(.inputMonitoring)
     }
 
     private func claudeBadge(for status: OnboardingStepStatus) -> OnboardingStepBadge? {

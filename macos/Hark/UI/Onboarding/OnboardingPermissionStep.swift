@@ -45,6 +45,14 @@ struct OnboardingPermissionStep: View {
     /// Invoked when the user clicks the primary action.
     let onPrimaryAction: () -> Void
 
+    /// Concrete, numbered actions to take once the user is in System
+    /// Settings (e.g. "Find Hark in the list", "Switch the toggle on").
+    /// Surfaced only after `hasRequested` flips, so it appears the moment
+    /// the user is staring at the Settings pane and wondering what to do —
+    /// the exact point we lose people. Empty for the microphone step,
+    /// which grants in-app and needs no Settings hunting.
+    var settingsSteps: [String] = []
+
     /// Invoked when the user clicks "Restart Hark to apply" — the
     /// honest fix for post-update TCC drift, where Settings shows the
     /// toggle on but the running process still sees the old (denied)
@@ -62,6 +70,13 @@ struct OnboardingPermissionStep: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 8)
+            // Inline "what to do in Settings" guidance. Only after the
+            // user has been sent to Settings (hasRequested) and only
+            // while the grant is still missing — once granted the step
+            // collapses to the green "All set" line.
+            if hasRequested, status == .incomplete, !settingsSteps.isEmpty {
+                settingsGuidance
+            }
             // Recovery affordance for post-update TCC drift. Only show
             // it after the user has tried the normal path once —
             // otherwise it's noise.
@@ -72,6 +87,31 @@ struct OnboardingPermissionStep: View {
                     .foregroundStyle(.tint)
             }
         }
+    }
+
+    /// Numbered "do this in Settings" checklist. Renders each step in a
+    /// row with its ordinal so the user can follow along while the
+    /// Settings window is open in front of them.
+    private var settingsGuidance: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(settingsSteps.enumerated()), id: \.offset) { index, step in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(index + 1).")
+                        .font(.footnote.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.tint)
+                    Text(step)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .frame(maxWidth: 320, alignment: .leading)
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.background.secondary)
+        )
     }
 
     @ViewBuilder private var statusBlock: some View {

@@ -111,9 +111,10 @@ final class OnboardingWindowController: NSObject {
 
 extension OnboardingWindowController: NSWindowDelegate {
     func windowWillClose(_: Notification) {
-        // Closing the window with permissions still missing is allowed — the
-        // user can re-open it from the menu later (we'll add that surface in
-        // a future PR). For now we just let it close.
+        // Closing the window with permissions still missing is allowed —
+        // the menu's "Finish setup…" item (shown while permissions are
+        // incomplete) is the discoverable way back in. We just stop the
+        // poll timer here.
         stopPolling()
     }
 }
